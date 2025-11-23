@@ -2,14 +2,14 @@
 name = "prime-guardrails"
 version = "0.1.0"
 description = "PRIME Agentic Safety Framework"
-authors = [{ name = "Antigravity", email = "antigravity@google.com" }]
+authors = [{ name = "Ivy", email = "" }]
 license = "Apache-2.0"
 readme = "README.md"
 dependencies = [
-    "google-cloud-aiplatform[adk,agent_engine]>=1.93.0",
-    "google-adk>=1.0.0",
-    "pydantic-settings>=2.8.1",
-    "torch",
+    "google-cloud-aiplatform[adk]>=1.38.0",
+    "google-adk>=0.1.0",
+    "pydantic-settings>=2.0.0",
+    "torch==2.2.2",
     "transformers",
     "timm",
     "pillow",
