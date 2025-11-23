@@ -20,12 +20,14 @@ class Config(BaseSettings):
         ),
         env_prefix="GOOGLE_",
         case_sensitive=True,
+        extra="ignore"
     )
     
     agent_settings: AgentModel = Field(default=AgentModel())
     app_name: str = "prime_guardrails_app"
     CLOUD_PROJECT: str = Field(default="my_project")
     CLOUD_LOCATION: str = Field(default="us-central1")
+    GENAI_USE_VERTEXAI: str = Field(default="true")
     
     # Policy Configuration
     POLICY_MODE: str = Field(default="STRICT")

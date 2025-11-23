@@ -1,19 +1,17 @@
-import torch
-from transformers import pipeline, AutoImageProcessor, AutoModelForImageClassification
-from PIL import Image
 import requests
 from io import BytesIO
+from PIL import Image
 
 class TextSafetyTool:
     def __init__(self):
+        # Lazy import
+        from transformers import pipeline
         self.classifier = pipeline("text-classification", model="Falconsai/offensive_speech_detection")
 
     def check(self, text: str) -> dict:
         try:
             results = self.classifier(text)
             # Result format: [{'label': 'offensive', 'score': 0.99}] or similar
-            # Adjust based on actual model output. Falconsai/offensive_speech_detection usually outputs 'offensive' or 'safe' (or 0/1)
-            # Let's assume label 'offensive' means offensive.
             
             result = results[0]
             label = result['label'].lower()
@@ -33,17 +31,18 @@ class TextSafetyTool:
             }
         except Exception as e:
             print(f"Text safety check failed: {e}")
-            # Fail open or closed? Spec implies fail closed if unsafe, but if tool fails? 
-            # Let's return safe if tool fails but log it, or maybe unsafe to be conservative.
-            # For now, let's return safe with low confidence to avoid blocking on errors during dev.
             return {"is_safe": True, "risk_category": "Error", "confidence": 0.0}
 
 class ImageSafetyTool:
     def __init__(self):
+        # Lazy imports
+        from transformers import AutoImageProcessor, AutoModelForImageClassification
         self.processor = AutoImageProcessor.from_pretrained("Marqo/nsfw-image-detection-384")
         self.model = AutoModelForImageClassification.from_pretrained("Marqo/nsfw-image-detection-384")
 
     def check(self, image_input) -> dict:
+        import torch
+        
         try:
             image = None
             if isinstance(image_input, str):
@@ -62,7 +61,6 @@ class ImageSafetyTool:
                 logits = outputs.logits
             
             # Model specific output processing
-            # Marqo/nsfw-image-detection-384 usually has labels like 'NSFW', 'SFW'
             predicted_label = self.model.config.id2label[logits.argmax(-1).item()]
             probs = torch.nn.functional.softmax(logits, dim=-1)
             nsfw_score = probs[0][self.model.config.label2id['NSFW']].item() if 'NSFW' in self.model.config.label2id else 0.0

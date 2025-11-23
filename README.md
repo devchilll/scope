@@ -83,6 +83,50 @@ The system uses the **ADK Callback Pattern** to wire components together.
     - `pillow` (Image processing)
     - `requests` (Image fetching)
 
+## Installation & Setup
+
+### Prerequisites
+- Python 3.10 or higher
+- [uv](https://github.com/astral-sh/uv) package manager
+
+### Install uv (if not already installed)
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+### Install Dependencies
+```bash
+uv sync
+```
+
+This will:
+- Create a virtual environment at `.venv`
+- Install all required dependencies from `pyproject.toml`
+- Download ML models on first use (lazy loading)
+
+### Configure Environment
+Create a `.env` file in the project root with your Google Cloud credentials:
+```bash
+GOOGLE_GENAI_USE_VERTEXAI=true
+GOOGLE_CLOUD_PROJECT=your-project-id
+GOOGLE_CLOUD_LOCATION=us-west1
+```
+
+## Running the Agent
+
+### Web UI (Recommended)
+```bash
+uv run adk web
+```
+Then open http://127.0.0.1:8000 and select `prime_guardrails` from the dropdown.
+
+### CLI Mode
+```bash
+uv run adk run prime_guardrails
+```
+
+> **Important:** Always use `uv run` prefix to ensure the command runs in the correct virtual environment with all dependencies.
+
 ## Success Criteria
 
 - An explicit profanity triggers the local BERT model and blocks without an API call to Gemini.
