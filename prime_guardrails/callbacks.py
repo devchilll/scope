@@ -1,6 +1,6 @@
 import logging
 from google.adk.agents.callback_context import CallbackContext
-from google.adk.models import LlmRequest
+from google.adk.models import LlmRequest, LlmResponse, Content, Part
 from .safety import TextSafetyTool, ImageSafetyTool
 
 logger = logging.getLogger(__name__)
@@ -25,10 +25,11 @@ def get_image_tool():
 
 def fast_guardrail_callback(
     callback_context: CallbackContext, llm_request: LlmRequest
-) -> None:
+) -> LlmResponse | None:
     """
     PRIME Component: Layer 2 (Risk Sensing)
     Runs before the agent processes the request.
+    Returns LlmResponse to block unsafe content, or None to continue.
     """
     # Extract text from request
     user_text = ""
@@ -38,7 +39,7 @@ def fast_guardrail_callback(
                 user_text += part.text
 
     if not user_text:
-        return
+        return None
 
     logger.info(f"[PRIME Layer 2] Checking input: {user_text[:50]}...")
     
@@ -48,13 +49,27 @@ def fast_guardrail_callback(
     
     if not text_result['is_safe']:
         logger.warning(f"[PRIME Layer 2] BLOCKED: {text_result['risk_category']}")
-        # In ADK, raising an exception in a callback might stop the chain.
-        # Alternatively, we could modify the request to be empty or contain a warning.
-        # For strict safety, raising ValueError is appropriate.
-        raise ValueError(f"Blocked by Text Safety Tool: {text_result['risk_category']}")
+        
+        # Return a safety refusal response instead of raising exception
+        refusal_message = (
+            "I cannot process this request as it was flagged by our safety systems. "
+            f"Reason: {text_result['risk_category']}. "
+            "Please rephrase your question in a respectful manner."
+        )
+        
+        return LlmResponse(
+            candidates=[
+                Content(
+                    parts=[Part(text=refusal_message)],
+                    role="model"
+                )
+            ]
+        )
 
     # Image Check (Placeholder for future implementation if artifacts are accessible in LlmRequest)
     # Currently LlmRequest structure for artifacts/images depends on specific ADK version usage.
     # If images are passed as parts with mime_type, we would iterate them here.
     
     logger.info("[PRIME Layer 2] Passed.")
+    return None  # Continue to agent
+
