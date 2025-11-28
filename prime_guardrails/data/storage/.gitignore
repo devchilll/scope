@@ -1,0 +1,8 @@
+# Ignore database files
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Keep README
+!README.md

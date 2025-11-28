@@ -1,0 +1,6 @@
+# Ignore all log files
+*.jsonl
+*.log
+
+# Keep README
+!README.md
