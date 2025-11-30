@@ -12,6 +12,15 @@ class AgentModel(BaseModel):
     name: str = Field(default="prime_safety_router")
     model: str = Field(default="gemini-2.0-flash-live-001")
 
+class BankInfo(BaseModel):
+    """Bank contact and information settings."""
+    name: str = Field(default="PRIME Bank")
+    phone: str = Field(default="1-800-PRIME-BANK")
+    email: str = Field(default="support@primebank.com")
+    website: str = Field(default="https://www.primebank.com")
+    hours: str = Field(default="Monday-Friday 9AM-5PM EST, Saturday 10AM-2PM EST")
+    address: str = Field(default="123 Banking Street, Financial District, NY 10004")
+
 # ============================================================================
 # PILLAR 1: Safety Policy
 # ============================================================================
@@ -84,6 +93,7 @@ class Config(BaseSettings):
     )
     
     agent_settings: AgentModel = Field(default_factory=AgentModel)
+    bank_info: BankInfo = Field(default_factory=BankInfo)
     app_name: str = "prime_guardrails_app"
     CLOUD_PROJECT: str = Field(default="my_project")
     CLOUD_LOCATION: str = Field(default="us-central1")

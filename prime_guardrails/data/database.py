@@ -460,10 +460,9 @@ class Database:
                 confidence=row["confidence"],
                 created_at=datetime.fromisoformat(row["created_at"]),
                 status=row["status"],
-                resolved_at=datetime.fromisoformat(row["resolved_at"]) if row["resolved_at"] else None,
+                resolution_timestamp=datetime.fromisoformat(row["resolved_at"]) if row["resolved_at"] else None,
                 resolved_by=row["resolved_by"],
-                resolution=row["resolution"],
-                metadata=json.loads(row["metadata"]) if row["metadata"] else None
+                resolution_note=row["resolution"]
             )
             for row in rows
         ]

@@ -124,7 +124,7 @@ Return ONLY the JSON object, no other text.
             contents=layer2_prompt,
             config={
                 "response_mime_type": "application/json",
-                "temperature": 0.1,  # Low temperature for consistent safety analysis
+                "temperature": 0.0,  # Zero temperature for deterministic safety analysis
             }
         )
         
@@ -168,7 +168,7 @@ Return ONLY the JSON object, no other text.
         return json.dumps(error_response, indent=2)
 
 
-def make_safety_decision(safety_analysis: dict) -> str:
+def make_safe_and_compliant_decision(safety_analysis: dict) -> str:
     """Make a decision based on safety analysis results.
     
     This tool takes the output from safety_check_layer2 and makes a verdict:
@@ -210,9 +210,9 @@ Based on the safety analysis above, decide what action to take.
 
 ## ACTION TYPES:
 - **approve**: Request is safe and compliant (safety_score >= 0.8, compliance_score >= 0.8), proceed with normal processing
-- **reject**: Request has clear violations or very low scores (safety_score < 0.4 OR compliance_score < 0.4), refuse politely
-- **rewrite**: Request has valid intent but some concerns (scores 0.4-0.8), provide rewritten version in params.rewritten_text
-- **escalate**: Uncertain situation, low confidence, or edge case (confidence < 0.7), requires human review
+- **reject**: Request has clear, unambiguous violations (e.g., prompt injection, offensive language) OR very low scores (safety_score < 0.3)
+- **escalate**: Ambiguous or off-topic requests (e.g., "help me fight my manager"), edge cases, low confidence (confidence < 0.7), or moderate safety concerns (0.3 <= safety_score < 0.8)
+- **rewrite**: Request has valid banking intent but some phrasing concerns (scores 0.6-0.8), provide rewritten version in params.rewritten_text
 
 Return ONLY the JSON object, no other text.
 """
@@ -224,7 +224,7 @@ Return ONLY the JSON object, no other text.
             contents=decision_prompt,
             config={
                 "response_mime_type": "application/json",
-                "temperature": 0.1,
+                "temperature": 0.0,  # Zero temperature for deterministic decisions
             }
         )
         
@@ -263,14 +263,14 @@ Return ONLY the JSON object, no other text.
         return json.dumps(error_response, indent=2)
 
 
-def create_escalation_ticket(reason: str, risk_level: str = "medium") -> str:
+def create_escalation_ticket(user_input: str, reasoning: str) -> str:
     """Create an escalation ticket for human review.
     
     Call this tool when the safety decision is 'escalate'.
     
     Args:
-        reason: The reasoning for escalation (from make_safety_decision)
-        risk_level: Risk level (low, medium, high)
+        user_input: The original user request that triggered escalation
+        reasoning: The reasoning for escalation (from make_safe_and_compliant_decision)
         
     Returns:
         Confirmation message with ticket ID
@@ -279,8 +279,8 @@ def create_escalation_ticket(reason: str, risk_level: str = "medium") -> str:
         queue = EscalationQueue()
         ticket = EscalationTicket(
             user_id=config.IAM_CURRENT_USER_ID,
-            reason=reason,
-            risk_level=risk_level,
+            input_text=user_input,
+            agent_reasoning=reasoning,
             confidence=0.0  # Agent confidence is 0 for escalations
         )
         ticket_id = queue.add_ticket(ticket)
@@ -292,8 +292,8 @@ def create_escalation_ticket(reason: str, risk_level: str = "medium") -> str:
             action="create_escalation_ticket",
             details={
                 "ticket_id": ticket_id,
-                "reason": reason,
-                "risk_level": risk_level
+                "user_input": user_input,
+                "reasoning": reasoning
             }
         )
         
@@ -357,7 +357,7 @@ def list_escalation_tickets(status: Optional[str] = None) -> str:
         return f"Error listing tickets: {str(e)}"
 
 
-def log_agent_response(response_summary: str, model_used: str = "gemini-2.5-flash") -> str:
+def log_agent_response(response_summary: str, full_response: str = "", model_used: str = "gemini-2.5-flash") -> str:
     """Log the agent's response for audit trail.
     
     This tool logs agent responses for compliance and monitoring.
@@ -365,31 +365,37 @@ def log_agent_response(response_summary: str, model_used: str = "gemini-2.5-flas
     
     Args:
         response_summary: Brief summary of your response (1-2 sentences)
+        full_response: The complete response text that will be shown to the user
         model_used: The model that generated the response
         
     Returns:
         Confirmation that the response was logged
     """
-    # Log the LLM response
-    audit_logger.log_event(
-        event_type=AuditEventType.USER_QUERY,
-        user_id=config.IAM_CURRENT_USER_ID,
-        action="llm_response",
-        details={
-            "model": model_used,
-            "response_received": True,
-            "summary": response_summary[:200]
-        }
-    )
-    
-    return f"✅ Response logged successfully for audit trail (model: {model_used})"
+    try:
+        # Log the LLM response
+        audit_logger.log_event(
+            event_type=AuditEventType.USER_QUERY,
+            user_id=config.IAM_CURRENT_USER_ID,
+            action="llm_response",
+            details={
+                "model": model_used,
+                "response_received": True,
+                "summary": response_summary[:200],
+                "full_response": full_response[:2000] if full_response else None  # Limit to 2000 chars for log size
+            }
+        )
+        
+        return f"✅ Response logged successfully for audit trail (model: {model_used})"
+    except Exception as e:
+        # Return error but don't crash
+        return f"⚠️ Failed to log response: {str(e)}"
 
 
 # Export tools
 OBSERVABILITY_TOOLS = [
     safety_check_layer1,
     safety_check_layer2,
-    make_safety_decision,
+    make_safe_and_compliant_decision,
     create_escalation_ticket,
     list_escalation_tickets,
     log_agent_response,
