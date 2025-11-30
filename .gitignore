@@ -188,3 +188,6 @@ logs/
 tmp/
 temp/
 *.tmp
+
+# compressed files
+*.zip
