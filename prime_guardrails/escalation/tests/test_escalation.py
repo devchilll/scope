@@ -20,7 +20,7 @@ def test_queue():
 def sample_ticket():
     """Create a sample escalation ticket."""
     return EscalationTicket(
-        user_id="user123",
+        user_id="user",
         input_text="Test question",
         agent_reasoning="Uncertain",
         confidence=0.55
@@ -32,7 +32,7 @@ class TestEscalationTicket:
     
     def test_ticket_creation(self, sample_ticket):
         """Test creating a ticket."""
-        assert sample_ticket.user_id == "user123"
+        assert sample_ticket.user_id == "user"
         assert sample_ticket.input_text == "Test question"
         assert sample_ticket.confidence == 0.55
         assert sample_ticket.status == "pending"
@@ -74,10 +74,10 @@ class TestEscalationQueue:
         """Test USER can only see own tickets."""
         test_queue.add_ticket(sample_ticket)
         
-        user = User("user123", UserRole.USER)
+        user = User("user", UserRole.USER)
         tickets = test_queue.view_tickets(user)
         
-        assert all(t.user_id == "user123" for t in tickets)
+        assert all(t.user_id == "user" for t in tickets)
     
     def test_view_tickets_staff(self, test_queue, sample_ticket):
         """Test STAFF can see all tickets."""

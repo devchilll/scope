@@ -36,7 +36,7 @@ class User(BaseModel):
     class Config:
         json_schema_extra = {
             "example": {
-                "user_id": "user123",
+                "user_id": "user",
                 "name": "Alice Johnson",
                 "email": "alice@example.com",
                 "phone": "+1-555-0123",
@@ -59,7 +59,7 @@ class Account(BaseModel):
         json_schema_extra = {
             "example": {
                 "account_id": "acc001",
-                "user_id": "user123",
+                "user_id": "user",
                 "account_type": "checking",
                 "balance": 1234.56,
                 "currency": "USD",

@@ -5,13 +5,18 @@ Uses SQLite for development, can be migrated to PostgreSQL for production.
 """
 
 import sqlite3
+import json
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict, Any, TYPE_CHECKING
 from datetime import datetime, timedelta
 import uuid
 
 from .models import User, Account, Transaction, AccountType, TransactionType
 from ..iam import User as IAMUser, AccessControl, Permission, AccessDeniedException
+
+if TYPE_CHECKING:
+    from ..escalation.models import EscalationTicket
+
 
 
 class Database:
@@ -78,10 +83,30 @@ class Database:
             )
         """)
         
+        # Escalations table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS escalations (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                input_text TEXT NOT NULL,
+                agent_reasoning TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                created_at TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                resolved_at TEXT,
+                resolved_by TEXT,
+                resolution TEXT,
+                metadata TEXT
+            )
+        """)
+        
         # Indexes
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_accounts_user ON accounts(user_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_timestamp ON transactions(timestamp)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_escalations_user ON escalations(user_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_escalations_status ON escalations(status)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_escalations_created ON escalations(created_at)")
         
         conn.commit()
         conn.close()
@@ -337,3 +362,153 @@ class Database:
             )
             for row in rows
         ]
+    
+    # Escalation operations
+    
+    def create_escalation(self, ticket: "EscalationTicket") -> str:
+        """Create a new escalation ticket.
+        
+        Args:
+            ticket: EscalationTicket model
+            
+        Returns:
+            Ticket ID
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            INSERT INTO escalations 
+            (id, user_id, input_text, agent_reasoning, confidence, created_at, 
+             status, resolved_at, resolved_by, resolution, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            ticket.id,
+            ticket.user_id,
+            ticket.input_text,
+            ticket.agent_reasoning,
+            ticket.confidence,
+            ticket.created_at.isoformat(),
+            ticket.status,
+            ticket.resolved_at.isoformat() if ticket.resolved_at else None,
+            ticket.resolved_by,
+            ticket.resolution,
+            json.dumps(ticket.metadata) if ticket.metadata else None
+        ))
+        
+        conn.commit()
+        conn.close()
+        return ticket.id
+    
+    def get_escalations(
+        self,
+        iam_user: IAMUser,
+        status: Optional[str] = None
+    ) -> List["EscalationTicket"]:
+        """Get escalation tickets (IAM-protected).
+        
+        Args:
+            iam_user: IAM user making the request
+            status: Filter by status (optional)
+            
+        Returns:
+            List of EscalationTicket models
+            
+        Raises:
+            AccessDeniedException: If user lacks permission
+        """
+        from ..escalation.models import EscalationTicket
+        
+        # Check permission
+        AccessControl.check_permission(iam_user, Permission.VIEW_OWN_ESCALATIONS)
+        
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        # Build query based on role
+        if iam_user.role.value == "user":
+            # Users can only see their own escalations
+            if status:
+                cursor.execute(
+                    "SELECT * FROM escalations WHERE user_id = ? AND status = ? ORDER BY created_at DESC",
+                    (iam_user.user_id, status)
+                )
+            else:
+                cursor.execute(
+                    "SELECT * FROM escalations WHERE user_id = ? ORDER BY created_at DESC",
+                    (iam_user.user_id,)
+                )
+        else:
+            # Staff and Admin can see all escalations
+            if status:
+                cursor.execute(
+                    "SELECT * FROM escalations WHERE status = ? ORDER BY created_at DESC",
+                    (status,)
+                )
+            else:
+                cursor.execute("SELECT * FROM escalations ORDER BY created_at DESC")
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        return [
+            EscalationTicket(
+                id=row["id"],
+                user_id=row["user_id"],
+                input_text=row["input_text"],
+                agent_reasoning=row["agent_reasoning"],
+                confidence=row["confidence"],
+                created_at=datetime.fromisoformat(row["created_at"]),
+                status=row["status"],
+                resolved_at=datetime.fromisoformat(row["resolved_at"]) if row["resolved_at"] else None,
+                resolved_by=row["resolved_by"],
+                resolution=row["resolution"],
+                metadata=json.loads(row["metadata"]) if row["metadata"] else None
+            )
+            for row in rows
+        ]
+    
+    def resolve_escalation(
+        self,
+        iam_user: IAMUser,
+        ticket_id: str,
+        resolution: str
+    ) -> bool:
+        """Resolve an escalation ticket (IAM-protected).
+        
+        Args:
+            iam_user: IAM user resolving the ticket
+            ticket_id: Ticket ID
+            resolution: Resolution text
+            
+        Returns:
+            True if successful
+            
+        Raises:
+            AccessDeniedException: If user lacks permission
+        """
+        # Check permission
+        AccessControl.check_permission(iam_user, Permission.RESOLVE_ESCALATIONS)
+        
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            UPDATE escalations 
+            SET status = 'resolved',
+                resolved_at = ?,
+                resolved_by = ?,
+                resolution = ?
+            WHERE id = ?
+        """, (
+            datetime.now().isoformat(),
+            iam_user.user_id,
+            resolution,
+            ticket_id
+        ))
+        
+        conn.commit()
+        success = cursor.rowcount > 0
+        conn.close()
+        
+        return success

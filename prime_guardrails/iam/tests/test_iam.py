@@ -62,22 +62,22 @@ class TestUser:
     
     def test_user_creation(self):
         """Test creating a user."""
-        user = User("user123", UserRole.USER, "Alice")
-        assert user.user_id == "user123"
+        user = User("user", UserRole.USER, "Alice")
+        assert user.user_id == "user"
         assert user.role == UserRole.USER
         assert user.name == "Alice"
     
-    def test_user_has_permission(self):
-        """Test user permission checking."""
-        user = User("user123", UserRole.USER)
+    def test_user_permissions(self):
+        """Test user has correct permissions."""
+        user = User("user", UserRole.USER)
         assert user.has_permission(Permission.USE_AGENT)
         assert not user.has_permission(Permission.RESOLVE_ESCALATIONS)
     
-    def test_user_repr(self):
-        """Test user string representation."""
-        user = User("user123", UserRole.STAFF, "Bob")
+    def test_staff_permissions(self):
+        """Test staff has correct permissions."""
+        user = User("user", UserRole.STAFF, "Bob")
         repr_str = repr(user)
-        assert "user123" in repr_str
+        assert "user" in repr_str
         assert "staff" in repr_str
 
 

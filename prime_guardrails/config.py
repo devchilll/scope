@@ -104,13 +104,18 @@ class Config(BaseSettings):
     COMPLIANCE_ENABLED: bool = Field(default=True)
     COMPLIANCE_RULES: List[str] = Field(default_factory=list)
     
-    # Pillar 3: IAM Configuration
+    # Pillar 3: IAM    # IAM Pillar
     IAM_ENABLED: bool = Field(default=True)
     IAM_DEFAULT_USER_ROLE: str = Field(default="USER")
     IAM_REQUIRE_AUTHENTICATION: bool = Field(default=False)
     IAM_SESSION_TIMEOUT_MINUTES: int = Field(default=60)
     
-    # Pillar 4: Escalation Configuration
+    # Current user for testing
+    IAM_CURRENT_USER_ROLE: str = Field(default="USER")
+    IAM_CURRENT_USER_ID: str = Field(default="user")
+    IAM_CURRENT_USER_NAME: str = Field(default="Test User")
+
+    # Escalation Pillar 4: Escalation Configuration
     ESCALATION_ENABLED: bool = Field(default=True)
     ESCALATION_THRESHOLD: float = Field(default=0.6)
     ESCALATION_STORAGE_TYPE: str = Field(default="sqlite")

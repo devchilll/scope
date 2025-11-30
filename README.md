@@ -11,50 +11,79 @@
 
 PRIME is designed for **mission-critical applications** where safety, compliance, and auditability are paramount. Example: A banking customer service agent handling account inquiries, transactions, and fraud reports.
 
-### **Complete Agent Flow**
+### **Complete Agent Decision Flow**
 
 ```
-User: "What's my account balance?"
+User Input: "What's my account balance?"
     ↓
 ┌─────────────────────────────────────────┐
-│ before_model_callback (Safety)          │
-│ - Check for injection attacks           │
-│ - Validate input format                 │
+│ Safety Check (before_model_callback)   │
+│ - ML-based safety (disabled for now)   │
+│ - Log user input                        │
 └─────────────────────────────────────────┘
     ↓ (if safe)
 ┌─────────────────────────────────────────┐
-│ IAM Check                                │
-│ - Verify user identity                  │
-│ - Check permissions                     │
-└─────────────────────────────────────────┘
-    ↓ (if authorized)
-┌─────────────────────────────────────────┐
-│ LLM Agent (Orchestrator)                │
-│ - Understands intent                    │
-│ - Decides which tool to call            │
+│ LLM Decision Engine                     │
+│ - Analyzes user intent                  │
+│ - Checks compliance rules               │
+│ - Decides: APPROVE/REJECT/REWRITE/      │
+│            ESCALATE                      │
+│ - Selects tool if needed                │
 └─────────────────────────────────────────┘
     ↓
 ┌─────────────────────────────────────────┐
-│ Tool: get_account_balance(user_id)     │
-│ - Queries database                      │
+│ Decision: APPROVE                       │
+│ {                                        │
+│   "decision": "APPROVE",                │
+│   "action": "get_account_balance",      │
+│   "parameters": {"account_id": "acc1"}, │
+│   "reasoning": "User wants balance",    │
+│   "confidence": 0.95                    │
+│ }                                        │
+└─────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────┐
+│ System Executes Decision                │
+│                                          │
+│ If APPROVE → Call tool                  │
+│ If REJECT → Return refusal message      │
+│ If REWRITE → Rewrite & re-process       │
+│ If ESCALATE → Add to escalation queue   │
+└─────────────────────────────────────────┘
+    ↓ (APPROVE path)
+┌─────────────────────────────────────────┐
+│ Tool: get_account_balance(account_id)  │
+│ - IAM check (user can access account)  │
+│ - Query database                        │
+│ - Log account access (PCI-DSS)          │
 │ - Returns: $1,234.56                    │
 └─────────────────────────────────────────┘
     ↓
 ┌─────────────────────────────────────────┐
-│ LLM Agent (Response)                    │
-│ - Formats response professionally       │
+│ LLM Formats Response                    │
+│ - Professional tone                     │
 │ - Applies compliance rules              │
 └─────────────────────────────────────────┘
     ↓
 ┌─────────────────────────────────────────┐
-│ after_model_callback (Logging)          │
-│ - Log: User X queried balance           │
-│ - Audit: Timestamp, action, result      │
-│ - Compliance: PCI-DSS logging           │
+│ Logging (after_model_callback)          │
+│ - Log decision: APPROVE                 │
+│ - Log tool call: get_account_balance    │
+│ - Log response                          │
+│ - Compliance: PCI-DSS audit trail       │
 └─────────────────────────────────────────┘
     ↓
 Response: "Your current balance is $1,234.56"
 ```
+
+### **Decision Types:**
+
+| Decision | When | Action | Example |
+|----------|------|--------|---------|
+| **APPROVE** | Safe, compliant, within capabilities | Call tool or provide info | "What's my balance?" → get_account_balance() |
+| **REJECT** | Violates rules or outside capabilities | Polite refusal + reason | "Can you create an account?" → "Requires in-person verification" |
+| **REWRITE** | Valid intent, unsafe phrasing | Sanitize & re-process | "Hack my account" → "Access my account" |
+| **ESCALATE** | Low confidence or complex | Add to human review queue | "Transfer $100,000" → Escalation ticket |
 
 **Key Features:**
 - 🛡️ **Pre-LLM Safety**: Blocks malicious inputs before expensive LLM calls
@@ -279,7 +308,7 @@ Role-based access control for the entire system.
 from prime_guardrails.iam import User, UserRole, AccessControl
 
 # Create users
-customer = User("user123", UserRole.USER, "Alice")
+customer = User("user", UserRole.USER, "Alice")
 rep = User("staff456", UserRole.STAFF, "Bob")
 manager = User("admin789", UserRole.ADMIN, "Charlie")
 
@@ -322,7 +351,7 @@ queue = EscalationQueue()
 
 # Add ticket (agent)
 ticket = EscalationTicket(
-    user_id="user123",
+    user_id="user",
     input_text="Transfer $50,000 to external account",
     agent_reasoning="High-value transfer - requires approval",
     confidence=0.55
@@ -350,7 +379,7 @@ from prime_guardrails.data import User, Account, Transaction, AccountType
 
 # User model
 user = User(
-    user_id="user123",
+    user_id="user",
     name="Alice Johnson",
     email="alice@example.com",
     account_ids=["acc001", "acc002"]
@@ -359,7 +388,7 @@ user = User(
 # Account model
 account = Account(
     account_id="acc001",
-    user_id="user123",
+    user_id="user",
     account_type=AccountType.CHECKING,
     balance=1234.56,
     currency="USD"
@@ -388,7 +417,7 @@ db.create_user(user)
 db.create_account(account)
 
 # Get account (IAM-protected)
-iam_user = User("user123", UserRole.USER)
+iam_user = User("user", UserRole.USER)
 account = db.get_account(iam_user, "acc001")  # ✅ Allowed (own account)
 
 # Staff can view all accounts
@@ -418,21 +447,21 @@ audit = get_audit_logger()
 
 # Log user query
 audit.log_user_query(
-    user_id="user123",
+    user_id="user",
     query="What's my balance?",
     response_action="ALLOW"
 )
 
 # Log account access
 audit.log_account_access(
-    user_id="user123",
+    user_id="user",
     account_id="acc001",
     operation="view_balance"
 )
 
 # Log tool call
 audit.log_tool_call(
-    user_id="user123",
+    user_id="user",
     tool_name="get_account_balance",
     parameters={"account_id": "acc001"},
     result="$1,234.56"
@@ -440,7 +469,7 @@ audit.log_tool_call(
 
 # Log safety block
 audit.log_safety_block(
-    user_id="user123",
+    user_id="user",
     input_text="Offensive content",
     risk_category="Offensive"
 )
@@ -455,7 +484,7 @@ compliance = get_compliance_logger()
 
 # PCI-DSS: Log data access (Requirement 10.2)
 compliance.log_pci_data_access(
-    user_id="user123",
+    user_id="user",
     data_type="account",
     account_id="acc001",
     operation="read"
@@ -463,7 +492,7 @@ compliance.log_pci_data_access(
 
 # PCI-DSS: Log authentication (Requirement 10.2.4)
 compliance.log_pci_authentication(
-    user_id="user123",
+    user_id="user",
     success=True,
     method="oauth2",
     ip_address="192.168.1.1"
@@ -471,7 +500,7 @@ compliance.log_pci_authentication(
 
 # SOC2: Log access control decision (CC6.1)
 compliance.log_soc2_access_control(
-    user_id="user123",
+    user_id="user",
     resource="account_balance",
     permission="VIEW_ACCOUNTS",
     granted=True
@@ -479,7 +508,7 @@ compliance.log_soc2_access_control(
 
 # SOC2: Log incident (CC7.3)
 compliance.log_soc2_incident(
-    user_id="user123",
+    user_id="user",
     incident_type="unauthorized_access_attempt",
     severity="medium",
     description="Failed login attempt detected"
@@ -497,7 +526,7 @@ compliance.log_soc2_incident(
 {
   "timestamp": "2025-11-28T12:00:00",
   "event_type": "account_access",
-  "user_id": "user123",
+  "user_id": "user",
   "action": "account_view",
   "success": true,
   "details": {"account_id": "acc001", "operation": "view_balance"}
@@ -582,8 +611,8 @@ uv run adk web
 # All actions are automatically logged
 2025-11-28 12:00:00 - INFO - [PRIME Layer 2] Checking input: What's my balance?
 2025-11-28 12:00:00 - INFO - [PRIME Layer 2] Passed.
-2025-11-28 12:00:01 - INFO - [Tool] get_account_balance(user_id=user123)
-2025-11-28 12:00:01 - INFO - [Audit] User user123 queried balance: $1,234.56
+2025-11-28 12:00:01 - INFO - [Tool] get_account_balance(user_id=user)
+2025-11-28 12:00:01 - INFO - [Audit] User user queried balance: $1,234.56
 ```
 
 ---

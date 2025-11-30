@@ -51,3 +51,19 @@ For production, implement automated backups:
 # Example backup script
 sqlite3 banking.db ".backup banking_backup_$(date +%Y%m%d).db"
 ```
+
+## Seeding Sample Data
+
+To populate the database with sample data for testing:
+
+```bash
+# From project root
+uv run python prime_guardrails/data/seed_database.py
+```
+
+This creates:
+- Default user: `user` (Alice Johnson) - matches ADK web UI default
+- Checking account: `acc001` ($2,547.83)
+- Savings account: `acc002` ($15,234.56)
+- 9 sample transactions (deposits, withdrawals, payments)
+

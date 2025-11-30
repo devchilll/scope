@@ -16,11 +16,13 @@ class TextSafetyTool:
         from transformers import pipeline
         self.classifier = pipeline("text-classification", model="Falconsai/offensive_speech_detection")
 
-    def check(self, text: str) -> dict:
+    def check(self, text: str, threshold: float = 0.95) -> dict:
         """Check text for offensive content.
         
         Args:
             text: Text to check
+            threshold: Confidence threshold for blocking (default: 0.95)
+                      Only block if model is very confident (>95%)
             
         Returns:
             Dict with is_safe, risk_category, and confidence
@@ -36,7 +38,8 @@ class TextSafetyTool:
             is_safe = True
             risk_category = "None"
             
-            if "offensive" in label:
+            # Only block if model is very confident (>95% by default)
+            if "offensive" in label and score > threshold:
                 is_safe = False
                 risk_category = "Offensive"
             

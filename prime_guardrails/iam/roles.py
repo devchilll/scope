@@ -15,6 +15,10 @@ class Permission(Enum):
     USE_AGENT = "use_agent"
     BYPASS_SAFETY_CHECKS = "bypass_safety_checks"
     
+    # Banking permissions
+    VIEW_ACCOUNTS = "view_accounts"
+    VIEW_TRANSACTIONS = "view_transactions"
+    
     # Configuration permissions
     VIEW_CONFIG = "view_config"
     MODIFY_CONFIG = "modify_config"
@@ -46,12 +50,16 @@ ROLE_PERMISSIONS: dict[UserRole, Set[Permission]] = {
     UserRole.USER: {
         Permission.USE_AGENT,
         Permission.VIEW_OWN_ESCALATIONS,
+        Permission.VIEW_ACCOUNTS,
+        Permission.VIEW_TRANSACTIONS,
     },
     
     UserRole.STAFF: {
         Permission.USE_AGENT,
         Permission.VIEW_OWN_ESCALATIONS,
         Permission.VIEW_ALL_ESCALATIONS,  # Can read queue
+        Permission.VIEW_ACCOUNTS,
+        Permission.VIEW_TRANSACTIONS,
         Permission.VIEW_CONFIG,
         Permission.VIEW_LOGS,
     },
@@ -61,6 +69,8 @@ ROLE_PERMISSIONS: dict[UserRole, Set[Permission]] = {
         Permission.VIEW_OWN_ESCALATIONS,
         Permission.VIEW_ALL_ESCALATIONS,
         Permission.RESOLVE_ESCALATIONS,  # Can write to queue
+        Permission.VIEW_ACCOUNTS,
+        Permission.VIEW_TRANSACTIONS,
         Permission.VIEW_CONFIG,
         Permission.MODIFY_CONFIG,
         Permission.MODIFY_COMPLIANCE_RULES,
