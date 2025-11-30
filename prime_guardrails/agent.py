@@ -29,7 +29,7 @@ ALL_TOOLS = BANKING_TOOLS + OBSERVABILITY_TOOLS
 # Define the root agent
 root_agent = LlmAgent(
     name="prime_safety_router",
-    model="gemini-2.0-flash-live-001",
+    model="gemini-2.5-flash",
     instruction=ROUTER_INSTRUCTIONS,
     tools=ALL_TOOLS,  # Add banking + observability tools
     # Callbacks commented out - using explicit tools instead for visibility in trace viewer

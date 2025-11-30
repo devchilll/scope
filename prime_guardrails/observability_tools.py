@@ -66,29 +66,29 @@ def safety_check_layer1(user_input: str) -> str:
 
 
 def safety_check_layer2(user_input: str) -> str:
-    """Layer 2: LLM-based safety & compliance check with structured output.
+    """Layer 2: LLM-based safety & compliance analysis.
     
-    This layer calls Gemini with safety and compliance rules to make a contextual
-    decision about the user's request.
+    This layer analyzes user requests against safety and compliance rules,
+    returning safety scores and violations WITHOUT making a decision.
     
     Args:
         user_input: The user's input text to check
         
     Returns:
-        JSON string with safety decision:
+        JSON string with safety analysis:
         {
             "safety_score": 0.0-1.0,
-            "action": "approve" | "reject" | "rewrite" | "escalate",
-            "params": {...},
+            "compliance_score": 0.0-1.0,
             "confidence": 0.0-1.0,
-            "reasoning": "...",
-            "violated_rules": [...]
+            "violated_rules": [...],
+            "risk_factors": [...],
+            "analysis": "..."
         }
     """
-    # Create the Layer 2 safety check prompt
-    layer2_prompt = f"""You are a safety and compliance checker for a banking customer service agent.
+    # Create the Layer 2 safety analysis prompt
+    layer2_prompt = f"""You are a safety and compliance analyzer for a banking customer service agent.
 
-Your job is to analyze user requests and determine if they are safe and compliant with banking regulations.
+Your job is to analyze user requests against safety and compliance rules and provide a detailed assessment.
 
 ## SAFETY RULES:
 {SAFETY_RULES_TEXT}
@@ -101,79 +101,168 @@ Your job is to analyze user requests and determine if they are safe and complian
 
 ## YOUR TASK:
 Analyze the user request against the safety and compliance rules above.
-Return a JSON object with your decision.
+Return a JSON object with your analysis. DO NOT make a decision (approve/reject/etc), just analyze.
 
 ## OUTPUT FORMAT (JSON):
 {{
     "safety_score": 0.95,  // 0.0 (unsafe) to 1.0 (safe)
-    "action": "approve",  // "approve" | "reject" | "rewrite" | "escalate"
-    "params": {{}},  // Action-specific parameters (e.g., rewritten_text for "rewrite")
-    "confidence": 0.9,  // 0.0 (low) to 1.0 (high)
-    "reasoning": "Request is safe and compliant. User wants to check account balance, which is a standard banking operation.",
-    "violated_rules": []  // List of rule IDs if any violations (e.g., ["SAFETY-001", "COMP-005"])
+    "compliance_score": 0.90,  // 0.0 (non-compliant) to 1.0 (compliant)
+    "confidence": 0.9,  // 0.0 (low) to 1.0 (high) - how confident you are in this analysis
+    "violated_rules": [],  // List of rule IDs if any violations (e.g., ["SAFETY-001", "COMP-005"])
+    "risk_factors": [],  // List of specific risk factors identified (e.g., ["mentions competitors", "requests pricing"])
+    "analysis": "Request appears safe. User wants to check account balance, which is a standard banking operation with no safety or compliance concerns."
 }}
-
-## ACTION TYPES:
-- **approve**: Request is safe and compliant, proceed with normal processing
-- **reject**: Request violates safety or compliance rules, refuse politely
-- **rewrite**: Request has valid intent but unsafe phrasing, provide rewritten version in params.rewritten_text
-- **escalate**: Request is uncertain or requires human review, create escalation ticket
 
 Return ONLY the JSON object, no other text.
 """
     
     try:
-        # Call Gemini for Layer 2 safety check
+        # Call Gemini for Layer 2 safety analysis
         response = genai_client.models.generate_content(
-            model="gemini-2.0-flash-live-001",
+            model="gemini-2.5-flash",
             contents=layer2_prompt,
             config={
                 "response_mime_type": "application/json",
-                "temperature": 0.1,  # Low temperature for consistent safety decisions
+                "temperature": 0.1,  # Low temperature for consistent safety analysis
             }
         )
         
         # Parse the JSON response
-        safety_decision = json.loads(response.text)
+        safety_analysis = json.loads(response.text)
         
         # Log the Layer 2 check
         audit_logger.log_event(
             event_type=AuditEventType.USER_QUERY,
             user_id=config.IAM_CURRENT_USER_ID,
-            action="safety_layer2_check",
+            action="safety_layer2_analysis",
             details={
                 "input": user_input[:200],
-                "model": "gemini-2.0-flash-live-001",
-                "decision": safety_decision
+                "model": "gemini-2.5-flash",
+                "analysis": safety_analysis
             }
         )
         
         # Return the JSON as a string for the agent to parse
-        return json.dumps(safety_decision, indent=2)
+        return json.dumps(safety_analysis, indent=2)
         
     except Exception as e:
         # Log error
         audit_logger.log_event(
             event_type=AuditEventType.USER_QUERY,
             user_id=config.IAM_CURRENT_USER_ID,
-            action="safety_layer2_check_failed",
+            action="safety_layer2_analysis_failed",
+            success=False,
+            error=str(e)
+        )
+        
+        # Return a safe default (low scores on error)
+        error_response = {
+            "safety_score": 0.0,
+            "compliance_score": 0.0,
+            "confidence": 0.0,
+            "violated_rules": [],
+            "risk_factors": ["analysis_error"],
+            "analysis": f"Error during safety analysis: {str(e)}. Unable to complete analysis."
+        }
+        return json.dumps(error_response, indent=2)
+
+
+def make_safety_decision(safety_analysis_json: str) -> str:
+    """Make a decision based on safety analysis results.
+    
+    This tool takes the output from safety_check_layer2 and makes a verdict:
+    approve, reject, rewrite, or escalate.
+    
+    Args:
+        safety_analysis_json: JSON string from safety_check_layer2 containing:
+            - safety_score
+            - compliance_score
+            - confidence
+            - violated_rules
+            - risk_factors
+            - analysis
+            
+    Returns:
+        JSON string with decision:
+        {
+            "action": "approve" | "reject" | "rewrite" | "escalate",
+            "params": {...},
+            "reasoning": "..."
+        }
+    """
+    decision_prompt = f"""You are a decision maker for a banking customer service agent.
+
+You receive safety analysis results and must make a verdict on how to proceed.
+
+## SAFETY ANALYSIS RESULTS:
+{safety_analysis_json}
+
+## YOUR TASK:
+Based on the safety analysis above, decide what action to take.
+
+## OUTPUT FORMAT (JSON):
+{{
+    "action": "approve",  // "approve" | "reject" | "rewrite" | "escalate"
+    "params": {{}},  // Action-specific parameters (e.g., {{"rewritten_text": "..."}} for "rewrite")
+    "reasoning": "Safety and compliance scores are high (0.95, 0.90) with no violations. Request is safe to proceed."
+}}
+
+## ACTION TYPES:
+- **approve**: Request is safe and compliant (safety_score >= 0.8, compliance_score >= 0.8), proceed with normal processing
+- **reject**: Request has clear violations or very low scores (safety_score < 0.4 OR compliance_score < 0.4), refuse politely
+- **rewrite**: Request has valid intent but some concerns (scores 0.4-0.8), provide rewritten version in params.rewritten_text
+- **escalate**: Uncertain situation, low confidence, or edge case (confidence < 0.7), requires human review
+
+Return ONLY the JSON object, no other text.
+"""
+    
+    try:
+        # Call Gemini for decision making
+        response = genai_client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=decision_prompt,
+            config={
+                "response_mime_type": "application/json",
+                "temperature": 0.1,
+            }
+        )
+        
+        # Parse the JSON response
+        decision = json.loads(response.text)
+        
+        # Log the decision
+        audit_logger.log_event(
+            event_type=AuditEventType.USER_QUERY,
+            user_id=config.IAM_CURRENT_USER_ID,
+            action="safety_decision_made",
+            details={
+                "model": "gemini-2.5-flash",
+                "decision": decision
+            }
+        )
+        
+        return json.dumps(decision, indent=2)
+        
+    except Exception as e:
+        # Log error
+        audit_logger.log_event(
+            event_type=AuditEventType.USER_QUERY,
+            user_id=config.IAM_CURRENT_USER_ID,
+            action="safety_decision_failed",
             success=False,
             error=str(e)
         )
         
         # Return a safe default (escalate on error)
         error_response = {
-            "safety_score": 0.5,
             "action": "escalate",
             "params": {},
-            "confidence": 0.0,
-            "reasoning": f"Error during safety check: {str(e)}. Escalating for human review.",
-            "violated_rules": []
+            "reasoning": f"Error during decision making: {str(e)}. Escalating for human review."
         }
         return json.dumps(error_response, indent=2)
 
 
-def log_agent_response(response_summary: str, model_used: str = "gemini-2.0-flash-live-001") -> str:
+def log_agent_response(response_summary: str, model_used: str = "gemini-2.5-flash") -> str:
     """Log the agent's response for audit trail.
     
     This tool logs agent responses for compliance and monitoring.
@@ -205,5 +294,6 @@ def log_agent_response(response_summary: str, model_used: str = "gemini-2.0-flas
 OBSERVABILITY_TOOLS = [
     safety_check_layer1,
     safety_check_layer2,
+    make_safety_decision,
     log_agent_response,
 ]
