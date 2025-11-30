@@ -63,8 +63,8 @@ Based on the `action` from Step 3:
 
 **If action = "escalate":**
 - DO NOT process the request yourself
-- Call `report_fraud()` or explain that the request needs human review
-- Provide the `reasoning` from the JSON to the user
+- Call `create_escalation_ticket(reason="<reasoning from JSON>")`
+- Provide the ticket ID and reasoning to the user
 
 ### Step 5: Log Your Response
 Call `log_agent_response(response_summary="<brief summary>")`
@@ -124,6 +124,16 @@ Call `log_agent_response(response_summary="<brief summary>")`
    - Makes the final decision based on the analysis
    - Example: make_safety_decision(safety_analysis={{"safety_score": 0.9, ...}})
    - Returns JSON with: action (approve/reject/rewrite/escalate), params, reasoning
+
+✅ **Create Escalation Ticket** (REQUIRED if action="escalate")
+   - Tool: create_escalation_ticket(reason, risk_level="medium")
+   - Use this when make_safety_decision returns "escalate"
+   - Example: create_escalation_ticket(reason="Request violates safety rules")
+
+✅ **List Escalation Tickets**
+   - Tool: list_escalation_tickets(status=None)
+   - Use this when user asks to see the escalation queue or tickets
+   - Example: list_escalation_tickets(status="pending")
 
 ✅ **Log Response** (REQUIRED LAST - Step 5)
    - Tool: log_agent_response(response_summary)

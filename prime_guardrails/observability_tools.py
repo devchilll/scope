@@ -14,6 +14,7 @@ from google.genai import Client
 from .logging import get_audit_logger, AuditEventType
 from .config import Config
 from .rules import SAFETY_RULES_TEXT, COMPLIANCE_RULES_TEXT
+from .escalation import EscalationQueue, EscalationTicket
 
 # Initialize logger and config
 audit_logger = get_audit_logger()
@@ -262,6 +263,100 @@ Return ONLY the JSON object, no other text.
         return json.dumps(error_response, indent=2)
 
 
+def create_escalation_ticket(reason: str, risk_level: str = "medium") -> str:
+    """Create an escalation ticket for human review.
+    
+    Call this tool when the safety decision is 'escalate'.
+    
+    Args:
+        reason: The reasoning for escalation (from make_safety_decision)
+        risk_level: Risk level (low, medium, high)
+        
+    Returns:
+        Confirmation message with ticket ID
+    """
+    try:
+        queue = EscalationQueue()
+        ticket = EscalationTicket(
+            user_id=config.IAM_CURRENT_USER_ID,
+            reason=reason,
+            risk_level=risk_level,
+            confidence=0.0  # Agent confidence is 0 for escalations
+        )
+        ticket_id = queue.add_ticket(ticket)
+        
+        # Log the escalation
+        audit_logger.log_event(
+            event_type=AuditEventType.ESCALATION_CREATED,
+            user_id=config.IAM_CURRENT_USER_ID,
+            action="create_escalation_ticket",
+            details={
+                "ticket_id": ticket_id,
+                "reason": reason,
+                "risk_level": risk_level
+            }
+        )
+        
+        return f"✅ Escalation ticket created successfully. Ticket ID: {ticket_id}. A human agent will review this request."
+        
+    except Exception as e:
+        # Log error
+        audit_logger.log_event(
+            event_type=AuditEventType.ESCALATION_CREATED,
+            user_id=config.IAM_CURRENT_USER_ID,
+            action="create_escalation_ticket_failed",
+            success=False,
+            error=str(e)
+        )
+        return f"⚠️ Failed to create escalation ticket: {str(e)}. Please contact support."
+
+
+def list_escalation_tickets(status: Optional[str] = None) -> str:
+    """List escalation tickets in the queue.
+    
+    Args:
+        status: Filter by status ('pending', 'resolved', or None for all)
+        
+    Returns:
+        JSON string with list of tickets
+    """
+    try:
+        queue = EscalationQueue()
+        # Use the actual configured user and role to enforce IAM permissions
+        from .iam import User as IAMUser, UserRole
+        
+        # Map string role from config to UserRole enum
+        role_str = config.IAM_CURRENT_USER_ROLE.upper()
+        try:
+            user_role = UserRole(role_str.lower())
+        except ValueError:
+            # Fallback to USER if invalid role configured
+            user_role = UserRole.USER
+            
+        current_user = IAMUser(user_id=config.IAM_CURRENT_USER_ID, role=user_role)
+        
+        tickets = queue.view_tickets(current_user, status=status)
+        
+        if not tickets:
+            return "No tickets found."
+            
+        # Format tickets for display
+        ticket_list = []
+        for t in tickets:
+            ticket_list.append({
+                "id": t.ticket_id,
+                "status": t.status,
+                "risk": t.risk_level,
+                "reason": t.reason,
+                "created": t.created_at.isoformat() if t.created_at else None
+            })
+            
+        return json.dumps(ticket_list, indent=2)
+        
+    except Exception as e:
+        return f"Error listing tickets: {str(e)}"
+
+
 def log_agent_response(response_summary: str, model_used: str = "gemini-2.5-flash") -> str:
     """Log the agent's response for audit trail.
     
@@ -295,5 +390,7 @@ OBSERVABILITY_TOOLS = [
     safety_check_layer1,
     safety_check_layer2,
     make_safety_decision,
+    create_escalation_ticket,
+    list_escalation_tickets,
     log_agent_response,
 ]
