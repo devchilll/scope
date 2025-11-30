@@ -124,6 +124,9 @@ class Config(BaseSettings):
     IAM_CURRENT_USER_ROLE: str = Field(default="STAFF")
     IAM_CURRENT_USER_ID: str = Field(default="staff")
     IAM_CURRENT_USER_NAME: str = Field(default="Bob Smith")
+    IAM_CURRENT_USER_EMAIL: str = Field(default="bob.smith@primebank.com")
+    IAM_CURRENT_USER_PHONE: str = Field(default="+1-555-0456")
+    IAM_CURRENT_USER_ADDRESS: str = Field(default="456 Staff Lane, Banking City, NY 10005")
 
     # Escalation Pillar 4: Escalation Configuration
     ESCALATION_ENABLED: bool = Field(default=True)

@@ -14,17 +14,26 @@ USERS = {
     "user": {
         "id": "user",
         "name": "Alice Johnson",
-        "role": "USER"
+        "role": "USER",
+        "email": "alice@example.com",
+        "phone": "+1-555-0123",
+        "address": "123 Customer Street, Banking City, NY 10001"
     },
     "staff": {
         "id": "staff",
         "name": "Bob Smith",
-        "role": "STAFF"
+        "role": "STAFF",
+        "email": "bob.smith@primebank.com",
+        "phone": "+1-555-0456",
+        "address": "456 Staff Lane, Banking City, NY 10005"
     },
     "admin": {
         "id": "admin",
         "name": "Carol Admin",
-        "role": "ADMIN"
+        "role": "ADMIN",
+        "email": "carol.admin@primebank.com",
+        "phone": "+1-555-0789",
+        "address": "789 Admin Boulevard, Banking City, NY 10010"
     }
 }
 
@@ -53,6 +62,12 @@ def switch_user(user_key):
             new_lines.append(f'    IAM_CURRENT_USER_ID: str = Field(default="{user["id"]}")')
         elif 'IAM_CURRENT_USER_NAME: str = Field(default=' in line:
             new_lines.append(f'    IAM_CURRENT_USER_NAME: str = Field(default="{user["name"]}")')
+        elif 'IAM_CURRENT_USER_EMAIL: str = Field(default=' in line:
+            new_lines.append(f'    IAM_CURRENT_USER_EMAIL: str = Field(default="{user["email"]}")')
+        elif 'IAM_CURRENT_USER_PHONE: str = Field(default=' in line:
+            new_lines.append(f'    IAM_CURRENT_USER_PHONE: str = Field(default="{user["phone"]}")')
+        elif 'IAM_CURRENT_USER_ADDRESS: str = Field(default=' in line:
+            new_lines.append(f'    IAM_CURRENT_USER_ADDRESS: str = Field(default="{user["address"]}")')
         else:
             new_lines.append(line)
     
