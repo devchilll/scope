@@ -1,10 +1,26 @@
-"""IAM (Identity and Access Management) module for PRIME guardrails.
+"""IAM (Identity and Access Management) module for PRIME system."""
 
-This package provides role-based access control (RBAC) for the agent system.
-"""
+from .acl import User, AccessControl, AccessDeniedException, check_permission
+from .roles import (
+    UserRole,
+    Permission,
+    ROLE_PERMISSIONS,
+    get_permissions,
+    has_permission,
+    get_role_description,
+    get_all_role_descriptions
+)
 
-from .roles import UserRole, Permission, get_role_description, get_all_role_descriptions
-from .acl import AccessControl, check_permission, User, AccessDeniedException
-
-__all__ = ['UserRole', 'Permission', 'AccessControl', 'check_permission', 'User', 'AccessDeniedException', 'get_role_description', 'get_all_role_descriptions']
-
+__all__ = [
+    "User",
+    "UserRole",
+    "Permission",
+    "ROLE_PERMISSIONS",
+    "AccessControl",
+    "AccessDeniedException",
+    "check_permission",
+    "get_permissions",
+    "has_permission",
+    "get_role_description",
+    "get_all_role_descriptions",
+]

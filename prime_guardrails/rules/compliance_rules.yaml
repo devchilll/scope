@@ -71,13 +71,14 @@ compliance_rules:
   # Rule ID: COMP-007
   - id: "COMP-007"
     category: "transaction_processing"
-    description: "Cannot process transactions - requires additional authentication"
+    description: "Cannot process external transactions or payments - requires additional authentication. Transfers between own accounts are allowed."
     regulation: "Banking Security"
     examples:
-      - "Transfer money → Refuse, direct to mobile app"
-      - "Pay bill → Refuse, explain authentication requirement"
+      - "Transfer money between my accounts → Allow (internal transfer)"
+      - "Pay bill to external account → Refuse, direct to mobile app"
+      - "Send money to another person → Refuse, explain authentication requirement"
     severity: "medium"
-    action: "reject"
+    action: "conditional"
 
 # Configuration for compliance thresholds
 thresholds:

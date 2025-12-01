@@ -362,8 +362,8 @@ def transfer_money(from_account_id: str, to_account_id: str, amount: float, desc
         # Save to database (simplified - in real system would be atomic transaction)
         db.update_account(from_account)
         db.update_account(to_account)
-        db.add_transaction(from_txn)
-        db.add_transaction(to_txn)
+        db.create_transaction(from_txn)
+        db.create_transaction(to_txn)
         
         # Log for audit
         audit_logger.log_event(

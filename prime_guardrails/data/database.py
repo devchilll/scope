@@ -203,6 +203,34 @@ class Database:
         conn.close()
         return account.account_id
     
+    def update_account(self, account: Account) -> bool:
+        """Update an existing account.
+        
+        Args:
+            account: Account model with updated values
+            
+        Returns:
+            True if successful
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            UPDATE accounts 
+            SET balance = ?,
+                status = ?
+            WHERE account_id = ?
+        """, (
+            account.balance,
+            account.status,
+            account.account_id
+        ))
+        
+        conn.commit()
+        success = cursor.rowcount > 0
+        conn.close()
+        return success
+    
     def get_account(self, iam_user: IAMUser, account_id: str) -> Optional[Account]:
         """Get account by ID (IAM-protected).
         

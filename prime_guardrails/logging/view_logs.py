@@ -160,6 +160,20 @@ def format_log_entry(entry: Dict, verbose: bool = False) -> str:
             if 'summary' in details:
                 line += f"\n  Summary: {truncate_text(details['summary'], 120)}"
             
+            # Transaction details
+            if 'amount' in details and 'from_account' in details and 'to_account' in details:
+                amount = details['amount']
+                from_acc = details['from_account']
+                to_acc = details['to_account']
+                desc = details.get('description', '')
+                txn_id = details.get('transaction_id', '')
+                
+                line += f"\n  Transaction: {Colors.CYAN}{txn_id}{Colors.DIM}"
+                line += f"\n  Amount: {Colors.GREEN}${amount:.2f}{Colors.DIM}"
+                line += f"\n  From: {Colors.BOLD}{from_acc}{Colors.DIM} → To: {Colors.BOLD}{to_acc}{Colors.DIM}"
+                if desc:
+                    line += f"\n  Description: {desc}"
+            
             if 'error' in details:
                 line += f"\n  {Colors.RED}Error: {details['error']}{Colors.DIM}"
             

@@ -1,7 +1,7 @@
 from .config import Config
 from .compliance import format_compliance_section
 from .rules import SAFETY_RULES_TEXT, COMPLIANCE_RULES_TEXT
-from .iam import UserRole
+from .iam import UserRole, Permission, get_permissions
 
 # Initialize config to access policy
 configs = Config()
@@ -12,125 +12,118 @@ compliance_section = ""
 if policy.compliance.enabled and policy.compliance.transformed_rules:
     compliance_section = format_compliance_section(policy.compliance.transformed_rules)
 
-# Tool descriptions organized by category and role
+# Tool descriptions organized by permission requirements
 TOOL_DEFINITIONS = {
-    # Banking tools - different descriptions for USER vs STAFF/ADMIN
+    # Banking tools - require VIEW_ACCOUNTS or VIEW_TRANSACTIONS
     "account_balance": {
-        "USER": {
-            "title": "Check My Account Balances",
-            "tool": "get_account_balance(account_id)",
-            "notes": ["You can only view your own account balances"]
-        },
-        "STAFF_ADMIN": {
-            "title": "Check Account Balances (Any Customer)",
-            "tool": "get_account_balance(account_id)",
-            "notes": ["You can view any customer's account balances"]
+        "permissions": [Permission.VIEW_ACCOUNTS],
+        "title": "Check Account Balances",
+        "tool": "get_account_balance(account_id)",
+        "notes": {
+            "USER": ["You can only view your own account balances"],
+            "STAFF_ADMIN": ["You can view any customer's account balances"]
         }
     },
     "transaction_history": {
-        "USER": {
-            "title": "View My Transaction History",
-            "tool": "get_transaction_history(account_id, days=30)",
-            "notes": ["Default: Last 30 days", "You can only view your own transactions"]
-        },
-        "STAFF_ADMIN": {
-            "title": "View Transaction History (Any Customer)",
-            "tool": "get_transaction_history(account_id, days=30, user_id=None)",
-            "notes": ["Default: Last 30 days", "You can view any customer's transactions", "Example: get_transaction_history(account_id, user_id=\"user123\")"]
+        "permissions": [Permission.VIEW_TRANSACTIONS],
+        "title": "View Transaction History",
+        "tool": "get_transaction_history(account_id, days=30, user_id=None)",
+        "notes": {
+            "USER": ["Default: Last 30 days", "You can only view your own transactions", "Omit user_id parameter"],
+            "STAFF_ADMIN": ["Default: Last 30 days", "You can view any customer's transactions", "Example: get_transaction_history(account_id, user_id=\"user123\")"]
         }
     },
     "list_accounts": {
-        "USER": {
-            "title": "List My Accounts",
-            "tool": "get_user_accounts()",
-            "notes": ["Call with NO arguments for your own accounts"]
-        },
-        "STAFF_ADMIN": {
-            "title": "List Customer Accounts",
-            "tool": "get_user_accounts(user_id=None)",
-            "notes": ["For current user: get_user_accounts() with NO arguments", "For other users: get_user_accounts(user_id=\"user123\")", "You can view any customer's accounts"]
+        "permissions": [Permission.VIEW_ACCOUNTS],
+        "title": "List Accounts",
+        "tool": "get_user_accounts(user_id=None)",
+        "notes": {
+            "USER": ["Call with NO arguments for your own accounts"],
+            "STAFF_ADMIN": ["For current user: get_user_accounts() with NO arguments", "For other users: get_user_accounts(user_id=\"user123\")"]
         }
     },
     "report_fraud": {
-        "USER": {
-            "title": "Report Fraud",
-            "tool": "report_fraud(account_id, description)",
-            "notes": []
-        },
-        "STAFF_ADMIN": {
-            "title": "Report Fraud (On Behalf of Customer)",
-            "tool": "report_fraud(account_id, description, user_id=None)",
-            "notes": ["Example: report_fraud(account_id=\"acc001\", description=\"...\", user_id=\"user123\")"]
+        "permissions": [Permission.USE_AGENT],  # All users can report fraud
+        "title": "Report Fraud",
+        "tool": "report_fraud(account_id, description, user_id=None)",
+        "notes": {
+            "USER": ["Report suspicious activity on your accounts"],
+            "STAFF_ADMIN": ["Report fraud on behalf of customers", "Example: report_fraud(account_id=\"acc001\", description=\"...\", user_id=\"user123\")"]
         }
     },
     "transfer_money": {
-        "USER": {
-            "title": "Transfer Money Between My Accounts",
-            "tool": "transfer_money(from_account_id, to_account_id, amount, description=None)",
-            "notes": [
-                "Transfer money between your own accounts only",
-                "Example: transfer_money(from_account_id=\"acc001\", to_account_id=\"acc002\", amount=100.00, description=\"Savings\")",
-                "Validates ownership of both accounts and sufficient balance"
-            ]
-        },
-        "STAFF_ADMIN": {
-            "title": "Transfer Money Between My Accounts",
-            "tool": "transfer_money(from_account_id, to_account_id, amount, description=None)",
-            "notes": [
-                "Transfer money between your own accounts only",
-                "Example: transfer_money(from_account_id=\"acc001\", to_account_id=\"acc002\", amount=100.00)",
-                "Note: STAFF/ADMIN cannot transfer on behalf of customers"
-            ]
+        "permissions": [Permission.USE_AGENT],  # All users can transfer (ownership validated in function)
+        "title": "Transfer Money Between Accounts",
+        "tool": "transfer_money(from_account_id, to_account_id, amount, description=None)",
+        "notes": {
+            "USER": ["Transfer between your own accounts only", "Validates ownership and sufficient balance"],
+            "STAFF_ADMIN": ["Transfer between your own accounts only", "Note: Cannot transfer on behalf of customers"]
         }
     },
-    # Universal tools (same for all roles)
+    
+    # Universal tools - require USE_AGENT (all roles have this)
     "safety_layer1": {
+        "permissions": [Permission.USE_AGENT],
         "title": "Layer 1 Safety Check (REQUIRED FIRST - Step 1)",
         "tool": "safety_check_layer1(user_input)",
         "notes": ["**ALWAYS call this FIRST** for every user request", "Fast ML-based safety check"]
     },
     "safety_layer2": {
+        "permissions": [Permission.USE_AGENT],
         "title": "Layer 2 Safety & Compliance Analysis (REQUIRED SECOND - Step 2)",
         "tool": "safety_check_layer2(user_input)",
         "notes": ["**ALWAYS call this SECOND** after Layer 1 passes", "Returns JSON with: safety_score, compliance_score, confidence, violated_rules, risk_factors, analysis"]
     },
     "safety_decision": {
+        "permissions": [Permission.USE_AGENT],
         "title": "Make Safety Decision (REQUIRED THIRD - Step 3)",
         "tool": "make_safe_and_compliant_decision(safety_analysis)",
         "notes": ["**ALWAYS call this THIRD** with the object from Layer 2", "Returns JSON with: action (approve/reject/rewrite/escalate), params, reasoning"]
     },
     "create_escalation": {
+        "permissions": [Permission.USE_AGENT],
         "title": "Create Escalation Ticket (REQUIRED if action=\"escalate\" else skip)",
         "tool": "create_escalation_ticket(user_input, reasoning)",
         "notes": ["Use this when make_safe_and_compliant_decision returns \"escalate\""]
     },
     "log_response": {
-        "title": "Log Response (REQUIRED LAST - Step 5)",
+        "permissions": [Permission.USE_AGENT],
+        "title": "Log Response (Optional - Step 5)",
         "tool": "log_agent_response(response_summary, full_response)",
-        "notes": ["**ALWAYS call this LAST** before responding to user", "response_summary: Brief 1-2 sentence summary", "full_response: The complete text you will show to the user"]
+        "notes": [
+            "Call this when responding to banking queries (balance checks, transfers, transactions, fraud reports)",
+            "Do NOT call for administrative operations (viewing logs, listing escalations, resolving tickets)",
+            "response_summary: Brief 1-2 sentence summary",
+            "full_response: The complete text you will show to the user"
+        ]
     },
-    # Role-specific tools
-    "list_escalations_admin": {
-        "title": "List Escalation Tickets (ADMIN ONLY)",
+    
+    # Escalation tools - require VIEW_OWN_ESCALATIONS or VIEW_ALL_ESCALATIONS
+    "list_escalations": {
+        "permissions": [Permission.VIEW_OWN_ESCALATIONS, Permission.VIEW_ALL_ESCALATIONS],  # OR logic
+        "title": "List Escalation Tickets",
         "tool": "list_escalation_tickets(status=None)",
-        "notes": ["Use when user asks to see the escalation queue or tickets"]
+        "notes": {
+            "USER": ["View your own escalation tickets only"],
+            "STAFF_ADMIN": ["View all escalation tickets in the system"]
+        }
     },
+    
+    # Admin/Staff tools - require specific permissions
     "view_audit_logs": {
-        "title": "View Audit Logs (ADMIN ONLY)",
+        "permissions": [Permission.VIEW_LOGS],
+        "title": "View Audit Logs",
         "tool": "view_audit_logs(limit=10, event_type=None)",
         "notes": [
             "Use when user asks to see logs, audit logs, or recent activity",
             "event_type options: \"user_query\", \"account_access\", \"transaction_query\", \"safety_block\", \"escalation_created\"",
-            "Returns formatted audit log entries for compliance and security monitoring"
+            "Returns formatted audit log entries for compliance and security monitoring",
+            "Do NOT call log_agent_response after this - just show the results directly"
         ]
     },
-    "list_escalations_staff": {
-        "title": "List Escalation Tickets (STAFF ONLY)",
-        "tool": "list_escalation_tickets(status=None)",
-        "notes": ["Use when user asks to see the escalation queue or tickets"]
-    },
     "resolve_escalation": {
-        "title": "Resolve Escalation Ticket (STAFF/ADMIN ONLY)",
+        "permissions": [Permission.RESOLVE_ESCALATIONS],
+        "title": "Resolve Escalation Ticket",
         "tool": "resolve_escalation_ticket(ticket_id, resolution_note)",
         "notes": [
             "Mark an escalation ticket as resolved",
@@ -138,58 +131,71 @@ TOOL_DEFINITIONS = {
             "Example: resolve_escalation_ticket(ticket_id=\"abc-123\", resolution_note=\"Contacted customer, issue resolved\")"
         ]
     },
-    "list_escalations_user": {
-        "title": "List My Escalation Tickets",
-        "tool": "list_escalation_tickets(status=None)",
-        "notes": ["Use when user asks to see *their own* tickets", "You can only see tickets created by the current user"]
-    }
 }
 
 
-def format_tool(tool_def):
-    """Format a single tool definition into markdown."""
+def format_tool(tool_def, role):
+    """Format a single tool definition into markdown.
+    
+    Args:
+        tool_def: Tool definition dictionary
+        role: UserRole enum value
+        
+    Returns:
+        Formatted markdown string
+    """
     output = f"✅ **{tool_def['title']}**\n"
     output += f"   - Tool: {tool_def['tool']}\n"
-    for note in tool_def.get('notes', []):
+    
+    # Get notes - can be a list or dict with role-specific notes
+    notes = tool_def.get('notes', [])
+    if isinstance(notes, dict):
+        # Role-specific notes
+        role_key = "USER" if role == UserRole.USER else "STAFF_ADMIN"
+        notes = notes.get(role_key, [])
+    
+    for note in notes:
         output += f"   - {note}\n"
+    
     return output
 
 
 def get_tool_descriptions(role_str: str) -> str:
-    """Get tool descriptions based on user role."""
+    """Get tool descriptions based on user role's permissions.
+    
+    Uses IAM permissions as source of truth - tools are shown if user has
+    ANY of the required permissions (OR logic).
+    
+    Args:
+        role_str: Role string (e.g., "user", "staff", "admin")
+        
+    Returns:
+        Formatted tool descriptions
+    """
     try:
         role = UserRole(role_str.lower())
     except ValueError:
         role = UserRole.USER
 
+    # Get user's permissions from IAM
+    user_permissions = get_permissions(role)
+    
     tools = []
     
-    # Banking tools (role-specific)
-    role_key = "USER" if role == UserRole.USER else "STAFF_ADMIN"
-    for tool_name in ["account_balance", "transaction_history", "list_accounts", "report_fraud", "transfer_money"]:
-        tools.append(format_tool(TOOL_DEFINITIONS[tool_name][role_key]))
+    # Iterate through all tool definitions
+    for tool_name, tool_def in TOOL_DEFINITIONS.items():
+        required_perms = tool_def.get('permissions', [])
+        
+        # Check if user has ANY of the required permissions (OR logic)
+        if any(perm in user_permissions for perm in required_perms):
+            tools.append(format_tool(tool_def, role))
     
-    # General banking info
+    # Add general banking info (always shown)
     tools.append("""✅ **General Banking Information**
    - Answer questions about bank services, hours, policies
    - Explain banking concepts and procedures
    - Guide customers on how to do things
 """)
-    
-    # Universal tools (safety, logging)
-    for tool_name in ["safety_layer1", "safety_layer2", "safety_decision", "create_escalation", "log_response"]:
-        tools.append(format_tool(TOOL_DEFINITIONS[tool_name]))
-    
-    # Role-specific administrative tools
-    if role == UserRole.ADMIN:
-        tools.append(format_tool(TOOL_DEFINITIONS["list_escalations_admin"]))
-        tools.append(format_tool(TOOL_DEFINITIONS["view_audit_logs"]))
-        tools.append(format_tool(TOOL_DEFINITIONS["resolve_escalation"]))
-    elif role == UserRole.STAFF:
-        tools.append(format_tool(TOOL_DEFINITIONS["list_escalations_staff"]))
-        tools.append(format_tool(TOOL_DEFINITIONS["resolve_escalation"]))
-    else:  # USER
-        tools.append(format_tool(TOOL_DEFINITIONS["list_escalations_user"]))
     
     return "\n".join(tools)
 
