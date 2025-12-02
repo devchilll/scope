@@ -1,7 +1,7 @@
 """Unit tests for Safety Pillar (Text and Image safety tools)."""
 
 import pytest
-from prime_guardrails.safety import TextSafetyTool, ImageSafetyTool
+from scope.safety import TextSafetyTool, ImageSafetyTool
 
 
 class TestTextSafetyTool:

@@ -1,11 +1,11 @@
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime
-from prime_guardrails.data.database import Database
-from prime_guardrails.data.models import Account, AccountType, Transaction, TransactionType
-from prime_guardrails.iam import User as IAMUser, UserRole, Permission, AccessDeniedException
-from prime_guardrails.observability_tools import view_audit_logs, resolve_escalation_ticket
-from prime_guardrails.data.tools import transfer_money
+from scope.data.database import Database
+from scope.data.models import Account, AccountType, Transaction, TransactionType
+from scope.iam import User as IAMUser, UserRole, Permission, AccessDeniedException
+from scope.observability_tools import view_audit_logs, resolve_escalation_ticket
+from scope.data.tools import transfer_money
 
 class TestDatabaseFixes:
     @pytest.fixture
@@ -69,8 +69,8 @@ class TestDatabaseFixes:
         assert len(accounts) == 1
 
 class TestObservabilityToolsPermissions:
-    @patch('prime_guardrails.observability_tools.config')
-    @patch('prime_guardrails.observability_tools.audit_logger')
+    @patch('scope.observability_tools.config')
+    @patch('scope.observability_tools.audit_logger')
     def test_view_audit_logs_permissions(self, mock_logger, mock_config):
         # 1. Test as USER (Should fail)
         mock_config.IAM_CURRENT_USER_ID = "user1"
@@ -89,9 +89,9 @@ class TestObservabilityToolsPermissions:
             result = view_audit_logs()
             assert "Permission denied" not in result
 
-    @patch('prime_guardrails.observability_tools.config')
-    @patch('prime_guardrails.observability_tools.audit_logger')
-    @patch('prime_guardrails.observability_tools.EscalationQueue')
+    @patch('scope.observability_tools.config')
+    @patch('scope.observability_tools.audit_logger')
+    @patch('scope.observability_tools.EscalationQueue')
     def test_resolve_escalation_permissions(self, mock_queue, mock_logger, mock_config):
         # 1. Test as USER (Should fail)
         mock_config.IAM_CURRENT_USER_ID = "user1"
@@ -114,10 +114,10 @@ class TestObservabilityToolsPermissions:
         assert "resolved successfully" in result
 
 class TestTransferMoney:
-    @patch('prime_guardrails.data.tools.db')
-    @patch('prime_guardrails.data.tools.config')
-    @patch('prime_guardrails.data.tools.audit_logger')
-    @patch('prime_guardrails.data.tools.compliance_logger')
+    @patch('scope.data.tools.db')
+    @patch('scope.data.tools.config')
+    @patch('scope.data.tools.audit_logger')
+    @patch('scope.data.tools.compliance_logger')
     def test_transfer_money_method_call(self, mock_comp, mock_audit, mock_config, mock_db):
         # Setup mocks
         mock_config.IAM_CURRENT_USER_ID = "user1"

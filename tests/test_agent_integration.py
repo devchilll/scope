@@ -8,8 +8,8 @@ These tests verify the end-to-end functionality of the agent including:
 """
 
 import pytest
-from prime_guardrails.agent import root_agent
-from prime_guardrails.config import Config
+from scope.agent import root_agent
+from scope.config import Config
 
 
 class TestAgentInitialization:
@@ -38,13 +38,13 @@ class TestSafetyLayer:
         """Test that safe input passes safety checks."""
         # This would require running the actual agent
         # For now, we verify the callback exists
-        from prime_guardrails.callbacks import fast_guardrail_callback
+        from scope.callbacks import fast_guardrail_callback
         assert fast_guardrail_callback is not None
     
     def test_offensive_input_blocked(self):
         """Test that offensive input is blocked."""
         # This would test the actual safety tools
-        from prime_guardrails.safety import TextSafetyTool
+        from scope.safety import TextSafetyTool
         tool = TextSafetyTool()
         result = tool.check("offensive content here")
         assert "is_safe" in result
@@ -61,7 +61,7 @@ class TestComplianceEnforcement:
     
     def test_rule_transformation(self):
         """Test that rules are transformed correctly."""
-        from prime_guardrails.compliance import transform_rules
+        from scope.compliance import transform_rules
         raw = ["Don't discuss competitors"]
         transformed = transform_rules(raw)
         assert len(transformed) == 1
@@ -76,7 +76,7 @@ class TestAgentActions:
         # Would test actual agent response
         # Verifying action types are defined
         expected_actions = ["ALLOW", "REFUSE", "REWRITE", "ESCALATE"]
-        from prime_guardrails.prompt import ROUTER_INSTRUCTIONS
+        from scope.prompt import ROUTER_INSTRUCTIONS
         for action in expected_actions:
             assert action in ROUTER_INSTRUCTIONS
     
@@ -143,12 +143,12 @@ class TestPromptConstruction:
     
     def test_prompt_includes_safety_policy(self):
         """Test prompt includes safety policy."""
-        from prime_guardrails.prompt import ROUTER_INSTRUCTIONS
+        from scope.prompt import ROUTER_INSTRUCTIONS
         assert "SAFETY POLICY" in ROUTER_INSTRUCTIONS
     
     def test_prompt_includes_actions(self):
         """Test prompt includes all actions."""
-        from prime_guardrails.prompt import ROUTER_INSTRUCTIONS
+        from scope.prompt import ROUTER_INSTRUCTIONS
         assert "ALLOW" in ROUTER_INSTRUCTIONS
         assert "REFUSE" in ROUTER_INSTRUCTIONS
         assert "REWRITE" in ROUTER_INSTRUCTIONS
@@ -156,7 +156,7 @@ class TestPromptConstruction:
     
     def test_prompt_includes_output_format(self):
         """Test prompt includes JSON output format."""
-        from prime_guardrails.prompt import ROUTER_INSTRUCTIONS
+        from scope.prompt import ROUTER_INSTRUCTIONS
         assert "OUTPUT FORMAT" in ROUTER_INSTRUCTIONS
         assert "action" in ROUTER_INSTRUCTIONS
         assert "confidence" in ROUTER_INSTRUCTIONS

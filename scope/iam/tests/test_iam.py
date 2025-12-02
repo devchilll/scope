@@ -1,11 +1,11 @@
 """Unit tests for IAM Pillar (Roles, Permissions, Access Control)."""
 
 import pytest
-from prime_guardrails.iam import (
+from scope.iam import (
     User, UserRole, Permission, AccessControl, 
     AccessDeniedException
 )
-from prime_guardrails.iam.roles import has_permission, get_permissions
+from scope.iam.roles import has_permission, get_permissions
 
 
 class TestUserRoles:

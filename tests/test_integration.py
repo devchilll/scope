@@ -7,14 +7,14 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from prime_guardrails.escalation import EscalationQueue, EscalationTicket
-from prime_guardrails.iam import User, UserRole
-from prime_guardrails.observability_tools import (
+from scope.escalation import EscalationQueue, EscalationTicket
+from scope.iam import User, UserRole
+from scope.observability_tools import (
     safety_check_layer2,
     make_safe_and_compliant_decision,
     list_escalation_tickets
 )
-from prime_guardrails.config import Config
+from scope.config import Config
 
 
 class TestRoleAwareSafetyChecks:

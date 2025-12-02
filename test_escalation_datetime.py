@@ -2,8 +2,8 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from prime_guardrails.escalation import EscalationQueue, EscalationTicket
-from prime_guardrails.iam import User as IAMUser, UserRole
+from scope.escalation import EscalationQueue, EscalationTicket
+from scope.iam import User as IAMUser, UserRole
 
 # Create a test ticket
 print("Creating escalation ticket...")

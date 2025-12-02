@@ -7,7 +7,7 @@ import json
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
-from prime_guardrails.observability_tools import (
+from scope.observability_tools import (
     safety_check_layer2,
     make_safety_decision,
     list_escalation_tickets,

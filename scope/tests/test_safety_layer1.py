@@ -4,7 +4,7 @@ import os
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 
-from prime_guardrails.observability_tools import safety_check_layer1
+from scope.observability_tools import safety_check_layer1
 
 def test_safety_check():
     print("Testing Safety Layer 1 (Toxic-BERT)...")

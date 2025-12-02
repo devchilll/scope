@@ -2,8 +2,8 @@
 
 import pytest
 from pathlib import Path
-from prime_guardrails.escalation import EscalationQueue, EscalationTicket
-from prime_guardrails.iam import User, UserRole, AccessDeniedException
+from scope.escalation import EscalationQueue, EscalationTicket
+from scope.iam import User, UserRole, AccessDeniedException
 
 
 @pytest.fixture

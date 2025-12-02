@@ -1,15 +1,21 @@
-# PRIME: Agentic Safety Framework
+# SCOPE: Enterprise Agent Governance Framework
 
-**PRIME** (Policy, Risk, Intervention, Monitoring, Evaluation) is a production-ready, multi-modal safety guardrail system for Generative AI applications. Built on Google's Agent Development Kit (ADK), it implements a "Defense in Depth" architecture with **6 core modules**: Safety, Compliance, IAM, Escalation, Data, and Logging.
+**SCOPE** (Safety, Compliance, Observability, Permissions, Escalation) is a production-ready governance framework for enterprise AI agents. Built on Google's Agent Development Kit (ADK), it implements a "Defense in Depth" architecture with **5 core pillars**:
 
-![PRIME Web UI](example_web_ui.png)
-*PRIME agent running in the ADK Web UI*
+- **S**afety Guardrails
+- **C**ompliance & Policy-as-Code
+- **O**bservability & Auditing
+- **P**ermissions & Identity (IAM/ACL)
+- **E**scalation Protocols (Human-in-the-Loop)
+
+![SCOPE Web UI](example_web_ui.png)
+*SCOPE agent running in the ADK Web UI*
 
 ---
 
-## � Use Case: Banking Customer Service Agent
+## 🎯 Use Case: Banking Customer Service Agent
 
-PRIME is designed for **mission-critical applications** where safety, compliance, and auditability are paramount. Example: A banking customer service agent handling account inquiries, transactions, and fraud reports.
+SCOPE is designed for **mission-critical applications** where safety, compliance, and auditability are paramount. Example: A banking customer service agent handling account inquiries, transactions, and fraud reports.
 
 ### **Complete Agent Decision Flow**
 
@@ -96,7 +102,7 @@ Response: "Your current balance is $1,234.56"
 
 ## �🏗️ Architecture Overview
 
-PRIME uses a **layered defense** approach with modular, scalable components:
+SCOPE uses a **layered defense** approach with modular, scalable components:
 
 ```
 User Input
@@ -124,7 +130,7 @@ Human Review Queue (Role-based access)
 ## 📦 Project Structure
 
 ```
-prime_guardrails/
+scope/
 ├── safety/              # Pillar 1: Text/Image safety tools
 │   ├── __init__.py
 │   └── tools.py         # TextSafetyTool, ImageSafetyTool
@@ -216,7 +222,7 @@ GOOGLE_ESCALATION_STORAGE_TYPE=sqlite
 uv run adk web
 
 # CLI mode
-uv run adk run prime_guardrails
+uv run adk run scope
 ```
 
 ---
@@ -281,7 +287,7 @@ BANKING_COMPLIANCE_RULES = [
 ### Industry Templates
 
 ```python
-from prime_guardrails.compliance.examples import (
+from scope.compliance.examples import (
     HEALTHCARE_RULES,          # HIPAA compliance
     FINANCIAL_SERVICES_RULES,  # PCI-DSS, SOC2
     LEGAL_RULES,               # Attorney-client privilege
@@ -306,7 +312,7 @@ Role-based access control for the entire system.
 ### Usage Example
 
 ```python
-from prime_guardrails.iam import User, UserRole, AccessControl
+from scope.iam import User, UserRole, AccessControl
 
 # Create users
 customer = User("user", UserRole.USER, "Alice")
@@ -345,8 +351,8 @@ Human-in-the-loop review queue with SQLite storage.
 ### SQLite Queue
 
 ```python
-from prime_guardrails.escalation import EscalationQueue, EscalationTicket
-from prime_guardrails.iam import User, UserRole
+from scope.escalation import EscalationQueue, EscalationTicket
+from scope.iam import User, UserRole
 
 queue = EscalationQueue()
 
@@ -376,7 +382,7 @@ Banking database with IAM-protected operations.
 ### Database Models
 
 ```python
-from prime_guardrails.data import User, Account, Transaction, AccountType
+from scope.data import User, Account, Transaction, AccountType
 
 # User model
 user = User(
@@ -408,8 +414,8 @@ transaction = Transaction(
 ### IAM-Protected Database Operations
 
 ```python
-from prime_guardrails.data import Database
-from prime_guardrails.iam import User, UserRole
+from scope.data import Database
+from scope.iam import User, UserRole
 
 db = Database()
 
@@ -430,7 +436,7 @@ transactions = db.get_account_transactions(iam_user, "acc001", days=30)
 ```
 
 **Database Location:**
-- Development: `prime_guardrails/data/storage/banking.db` (SQLite)
+- Development: `scope/data/storage/banking.db` (SQLite)
 - Production: Migrate to PostgreSQL/MySQL
 
 ---
@@ -442,7 +448,7 @@ Comprehensive audit logging and compliance-specific logging.
 ### Audit Logging
 
 ```python
-from prime_guardrails.logging import get_audit_logger, AuditEventType
+from scope.logging import get_audit_logger, AuditEventType
 
 audit = get_audit_logger()
 
@@ -479,7 +485,7 @@ audit.log_safety_block(
 ### Compliance Logging (PCI-DSS, SOC2)
 
 ```python
-from prime_guardrails.logging import get_compliance_logger
+from scope.logging import get_compliance_logger
 
 compliance = get_compliance_logger()
 
@@ -517,9 +523,9 @@ compliance.log_soc2_incident(
 ```
 
 **Log Locations:**
-- Audit logs: `prime_guardrails/logging/audit_logs/audit_YYYY-MM-DD.jsonl`
-- PCI-DSS logs: `prime_guardrails/logging/compliance_logs/pci_dss_YYYY-MM-DD.jsonl`
-- SOC2 logs: `prime_guardrails/logging/compliance_logs/soc2_YYYY-MM-DD.jsonl`
+- Audit logs: `scope/logging/audit_logs/audit_YYYY-MM-DD.jsonl`
+- PCI-DSS logs: `scope/logging/compliance_logs/pci_dss_YYYY-MM-DD.jsonl`
+- SOC2 logs: `scope/logging/compliance_logs/soc2_YYYY-MM-DD.jsonl`
 
 **Log Format:** Structured JSON (one event per line)
 
@@ -544,10 +550,10 @@ compliance.log_soc2_incident(
 uv run pytest -v
 
 # Test individual pillars
-uv run pytest prime_guardrails/safety/tests/ -v
-uv run pytest prime_guardrails/compliance/tests/ -v
-uv run pytest prime_guardrails/iam/tests/ -v
-uv run pytest prime_guardrails/escalation/tests/ -v
+uv run pytest scope/safety/tests/ -v
+uv run pytest scope/compliance/tests/ -v
+uv run pytest scope/iam/tests/ -v
+uv run pytest scope/escalation/tests/ -v
 ```
 
 **Test Coverage:**
@@ -610,8 +616,8 @@ uv run adk web
 
 ```python
 # All actions are automatically logged
-2025-11-28 12:00:00 - INFO - [PRIME Layer 2] Checking input: What's my balance?
-2025-11-28 12:00:00 - INFO - [PRIME Layer 2] Passed.
+2025-11-28 12:00:00 - INFO - [SCOPE Layer 2] Checking input: What's my balance?
+2025-11-28 12:00:00 - INFO - [SCOPE Layer 2] Passed.
 2025-11-28 12:00:01 - INFO - [Tool] get_account_balance(user_id=user)
 2025-11-28 12:00:01 - INFO - [Audit] User user queried balance: $1,234.56
 ```
@@ -622,13 +628,13 @@ For real-time debugging without the web UI, use the terminal-based log viewer:
 
 ```bash
 # View recent logs (interactive mode)
-uv run python prime_guardrails/logging/view_logs.py
+uv run python scope/logging/view_logs.py
 
 # View specific event types
-uv run python prime_guardrails/logging/view_logs.py --event transaction_query
+uv run python scope/logging/view_logs.py --event transaction_query
 
 # Follow mode (tail logs)
-uv run python prime_guardrails/logging/view_logs.py --follow
+uv run python scope/logging/view_logs.py --follow
 ```
 
 ![Terminal Viewer](https://example.com/terminal_viewer.png)
@@ -641,7 +647,7 @@ uv run python prime_guardrails/logging/view_logs.py --follow
 ### Custom Compliance Rules
 
 ```python
-from prime_guardrails.config import Config
+from scope.config import Config
 
 config = Config(
     COMPLIANCE_RULES=[
@@ -705,7 +711,7 @@ config = Config(
 
 - `example_config.py` - Industry-specific configuration templates
 - `TESTING.md` - Comprehensive testing guide
-- `prime_guardrails/*/tests/` - Unit tests for each module
+- `scope/*/tests/` - Unit tests for each module
 - `tests/test_agent_integration.py` - Integration tests
 
 ---
@@ -725,7 +731,7 @@ For production banking applications:
 
 ## 🤝 Contributing
 
-This is a reference implementation of the PRIME framework. Contributions welcome!
+This is a reference implementation of the SCOPE framework. Contributions welcome!
 
 ---
 

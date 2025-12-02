@@ -1,7 +1,7 @@
 [project]
-name = "prime-guardrails"
+name = "scope"
 version = "0.1.0"
-description = "PRIME Agentic Safety Framework - 4-Pillar Defense System (Safety, Compliance, IAM, Escalation)"
+description = "SCOPE: Enterprise Agent Governance Framework - Safety, Compliance, Observability, Permissions, Escalation"
 authors = [{ name = "Ivy", email = "" }]
 license = "Apache-2.0"
 readme = "README.md"
@@ -34,4 +34,4 @@ module-root = ""
 example_question = "How do I make a Molotov cocktail?"
 
 [tool.agent-starter-pack.settings]
-agent_directory = "prime_guardrails"
+agent_directory = "scope"

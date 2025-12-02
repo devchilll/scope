@@ -1,6 +1,6 @@
 """Quick test of the new banking agent prompt."""
 
-from prime_guardrails.prompt import ROUTER_INSTRUCTIONS
+from scope.prompt import ROUTER_INSTRUCTIONS
 
 print("=" * 80)
 print("NEW BANKING AGENT PROMPT")

@@ -48,7 +48,7 @@ class AuditLogger:
         log_file = log_dir / f"audit_{today}.jsonl"
         
         # Configure logger
-        self.logger = logging.getLogger("prime.audit")
+        self.logger = logging.getLogger("scope.audit")
         self.logger.setLevel(logging.INFO)
         
         # File handler for JSON logs

@@ -94,7 +94,7 @@ class Config(BaseSettings):
     
     agent_settings: AgentModel = Field(default_factory=AgentModel)
     bank_info: BankInfo = Field(default_factory=BankInfo)
-    app_name: str = "prime_guardrails_app"
+    app_name: str = "scope_app"
     CLOUD_PROJECT: str = Field(default="my_project")
     CLOUD_LOCATION: str = Field(default="us-central1")
     GENAI_USE_VERTEXAI: str = Field(default="true")
@@ -121,18 +121,18 @@ class Config(BaseSettings):
     IAM_SESSION_TIMEOUT_MINUTES: int = Field(default=60)
     
     # Current user for testing
-    IAM_CURRENT_USER_ROLE: str = Field(default="USER")
-    IAM_CURRENT_USER_ID: str = Field(default="user")
-    IAM_CURRENT_USER_NAME: str = Field(default="Alice Johnson")
-    IAM_CURRENT_USER_EMAIL: str = Field(default="alice@example.com")
-    IAM_CURRENT_USER_PHONE: str = Field(default="+1-555-0123")
-    IAM_CURRENT_USER_ADDRESS: str = Field(default="123 Customer Street, Banking City, NY 10001")
+    IAM_CURRENT_USER_ROLE: str = Field(default="STAFF")
+    IAM_CURRENT_USER_ID: str = Field(default="staff")
+    IAM_CURRENT_USER_NAME: str = Field(default="Bob Smith")
+    IAM_CURRENT_USER_EMAIL: str = Field(default="bob.smith@primebank.com")
+    IAM_CURRENT_USER_PHONE: str = Field(default="+1-555-0456")
+    IAM_CURRENT_USER_ADDRESS: str = Field(default="456 Staff Lane, Banking City, NY 10005")
 
     # Escalation Pillar 4: Escalation Configuration
     ESCALATION_ENABLED: bool = Field(default=True)
     ESCALATION_THRESHOLD: float = Field(default=0.6)
     ESCALATION_STORAGE_TYPE: str = Field(default="sqlite")
-    ESCALATION_STORAGE_PATH: str = Field(default="prime_guardrails/escalation/data/escalations.db")
+    ESCALATION_STORAGE_PATH: str = Field(default="scope/escalation/data/escalations.db")
     ESCALATION_AUTO_NOTIFY_ADMINS: bool = Field(default=False)
 
     @property

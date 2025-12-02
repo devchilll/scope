@@ -1,12 +1,12 @@
 """Tests for prompt module - permission-driven tool descriptions."""
 
 import pytest
-from prime_guardrails.prompt import (
+from scope.prompt import (
     TOOL_DEFINITIONS,
     get_tool_descriptions,
     format_tool
 )
-from prime_guardrails.iam import UserRole, Permission, get_permissions
+from scope.iam import UserRole, Permission, get_permissions
 
 
 class TestToolDefinitions:

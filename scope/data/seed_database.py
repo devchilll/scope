@@ -14,7 +14,7 @@ import uuid
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from prime_guardrails.data import Database, User, Account, Transaction, AccountType, TransactionType
+from scope.data import Database, User, Account, Transaction, AccountType, TransactionType
 
 
 def seed_database():

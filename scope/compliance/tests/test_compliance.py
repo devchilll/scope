@@ -1,7 +1,7 @@
 """Unit tests for Compliance Pillar (Rule transformation and formatting)."""
 
 import pytest
-from prime_guardrails.compliance import transform_rules, format_compliance_section
+from scope.compliance import transform_rules, format_compliance_section
 
 
 class TestRuleTransformation:
