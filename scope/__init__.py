@@ -1,4 +1,4 @@
-"""PRIME Guardrails - Agentic Safety Framework."""
+"""SCOPE Guardrails - Agentic Safety Framework."""
 
 from .agent import root_agent
 

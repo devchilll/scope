@@ -1,4 +1,4 @@
-"""Banking tools for the PRIME agent.
+"""Banking tools for the SCOPE agent.
 
 These tools allow the agent to interact with the banking database
 with IAM-protected access control.

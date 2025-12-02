@@ -9,15 +9,15 @@ logger = logging.getLogger(__name__)
 
 class AgentModel(BaseModel):
     """Agent model settings."""
-    name: str = Field(default="prime_safety_router")
+    name: str = Field(default="scope_safety_router")
     model: str = Field(default="gemini-2.0-flash-live-001")
 
 class BankInfo(BaseModel):
     """Bank contact and information settings."""
-    name: str = Field(default="PRIME Bank")
-    phone: str = Field(default="1-800-PRIME-BANK")
-    email: str = Field(default="support@primebank.com")
-    website: str = Field(default="https://www.primebank.com")
+    name: str = Field(default="SCOPE Bank")
+    phone: str = Field(default="1-800-SCOPE-BANK")
+    email: str = Field(default="support@scopebank.com")
+    website: str = Field(default="https://www.scopebank.com")
     hours: str = Field(default="Monday-Friday 9AM-5PM EST, Saturday 10AM-2PM EST")
     address: str = Field(default="123 Banking Street, Financial District, NY 10004")
 
@@ -70,7 +70,7 @@ class EscalationConfig(BaseModel):
 # ============================================================================
 
 class Policy(BaseModel):
-    """Combined policy configuration - The 4 Pillars of PRIME."""
+    """Combined policy configuration - The 4 Pillars of SCOPE."""
     safety: SafetyPolicy = Field(default_factory=SafetyPolicy)
     compliance: ComplianceConfig = Field(default_factory=ComplianceConfig)
     iam: IAMConfig = Field(default_factory=IAMConfig)
@@ -81,7 +81,7 @@ class Policy(BaseModel):
 # ============================================================================
 
 class Config(BaseSettings):
-    """Configuration settings for the PRIME agent."""
+    """Configuration settings for the SCOPE agent."""
     
     model_config = SettingsConfigDict(
         env_file=os.path.join(
@@ -121,12 +121,12 @@ class Config(BaseSettings):
     IAM_SESSION_TIMEOUT_MINUTES: int = Field(default=60)
     
     # Current user for testing
-    IAM_CURRENT_USER_ROLE: str = Field(default="ADMIN")
-    IAM_CURRENT_USER_ID: str = Field(default="admin")
-    IAM_CURRENT_USER_NAME: str = Field(default="Carol Admin")
-    IAM_CURRENT_USER_EMAIL: str = Field(default="carol.admin@primebank.com")
-    IAM_CURRENT_USER_PHONE: str = Field(default="+1-555-0789")
-    IAM_CURRENT_USER_ADDRESS: str = Field(default="789 Admin Boulevard, Banking City, NY 10010")
+    IAM_CURRENT_USER_ROLE: str = Field(default="USER")
+    IAM_CURRENT_USER_ID: str = Field(default="user")
+    IAM_CURRENT_USER_NAME: str = Field(default="Alice Johnson")
+    IAM_CURRENT_USER_EMAIL: str = Field(default="alice@example.com")
+    IAM_CURRENT_USER_PHONE: str = Field(default="+1-555-0123")
+    IAM_CURRENT_USER_ADDRESS: str = Field(default="123 Customer Street, Banking City, NY 10001")
 
     # Escalation Pillar 4: Escalation Configuration
     ESCALATION_ENABLED: bool = Field(default=True)

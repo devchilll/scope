@@ -1,4 +1,4 @@
-"""PRIME Tools - Central import module for all guardrail components.
+"""SCOPE Tools - Central import module for all guardrail components.
 
 This module provides a unified interface to import safety, compliance, 
 and escalation tools from their respective packages.

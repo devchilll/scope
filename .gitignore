@@ -194,3 +194,7 @@ temp/
 
 # demo 
 demo/
+
+
+# naive agent
+naive_agent/

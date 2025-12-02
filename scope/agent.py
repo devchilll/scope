@@ -17,7 +17,7 @@ configs = Config()
 policy = configs.current_policy
 
 # Transform human-readable compliance rules at agent init
-logger.info("Initializing PRIME agent...")
+logger.info("Initializing SCOPE agent...")
 if policy.compliance.enabled and policy.compliance.raw_rules:
     logger.info(f"Transforming {len(policy.compliance.raw_rules)} compliance rules...")
     policy.compliance.transformed_rules = transform_rules(policy.compliance.raw_rules)
@@ -28,7 +28,7 @@ ALL_TOOLS = BANKING_TOOLS + OBSERVABILITY_TOOLS
 
 # Define the root agent
 root_agent = LlmAgent(
-    name="prime_safety_router",
+    name="scope_safety_router",
     model="gemini-2.5-flash",
     instruction=ROUTER_INSTRUCTIONS,
     tools=ALL_TOOLS,  # Add banking + observability tools
