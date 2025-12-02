@@ -384,24 +384,51 @@ def list_escalation_tickets(status: Optional[str] = None) -> str:
         tickets = queue.view_tickets(current_user, status=status)
         
         if not tickets:
-            return "No tickets found."
+            return "📋 No escalation tickets found."
             
-        # Format tickets for display
-        ticket_list = []
-        for t in tickets:
-            ticket_list.append({
-                "id": t.id,
-                "user_id": t.user_id,
-                "status": t.status,
-                "input_text": t.input_text,
-                "agent_reasoning": t.agent_reasoning,
-                "confidence": t.confidence,
-                "created_at": t.created_at.isoformat() if hasattr(t.created_at, 'isoformat') else str(t.created_at),
-                "resolved_by": t.resolved_by,
-                "resolution_note": t.resolution_note
-            })
+        # Format tickets for human-readable display
+        output = f"📊 **Escalation Queue** ({len(tickets)} ticket{'s' if len(tickets) != 1 else ''})\n"
+        output += "=" * 80 + "\n\n"
+        
+        for i, t in enumerate(tickets, 1):
+            # Status emoji
+            status_emoji = "🟡" if t.status == "pending" else "✅"
             
-        return json.dumps(ticket_list, indent=2)
+            # Format timestamp
+            try:
+                from datetime import datetime
+                if hasattr(t.created_at, 'isoformat'):
+                    dt = t.created_at
+                else:
+                    dt = datetime.fromisoformat(str(t.created_at))
+                time_str = dt.strftime("%Y-%m-%d %H:%M")
+            except:
+                time_str = str(t.created_at)
+            
+            # Build ticket display
+            output += f"**Ticket #{i}** {status_emoji} {t.status.upper()}\n"
+            output += f"├─ **ID**: `{t.id}`\n"
+            output += f"├─ **User**: {t.user_id}\n"
+            output += f"├─ **Created**: {time_str}\n"
+            output += f"├─ **User Request**:\n"
+            output += f"│  \"{t.input_text}\"\n"
+            output += f"├─ **Agent Analysis**:\n"
+            
+            # Wrap reasoning text for readability
+            reasoning = t.agent_reasoning
+            if len(reasoning) > 200:
+                reasoning = reasoning[:200] + "..."
+            output += f"│  {reasoning}\n"
+            
+            if t.status == "resolved":
+                output += f"├─ **Resolved By**: {t.resolved_by}\n"
+                output += f"└─ **Resolution**: {t.resolution_note}\n"
+            else:
+                output += f"└─ **Confidence**: {t.confidence}\n"
+            
+            output += "\n" + "-" * 80 + "\n\n"
+            
+        return output
         
     except Exception as e:
         return f"Error listing tickets: {str(e)}"
@@ -507,9 +534,12 @@ def view_audit_logs(limit: int = 10, event_type: Optional[str] = None) -> str:
                 return f"📋 No audit logs found for event type: {event_type}"
             return "📋 No audit logs found"
         
-        # Format the output in a user-friendly way
-        output = f"📊 **Audit Log Entries** (showing {len(entries)} of recent activity)\n"
-        output += f"📁 Log file: {log_files[0].name}\n\n"
+        # Format the output in a clean, professional way
+        output = f"🔍 **Audit Log** — {log_files[0].name}\n"
+        output += f"Showing {len(entries)} recent {'entry' if len(entries) == 1 else 'entries'}"
+        if event_type:
+            output += f" (filtered: {event_type})"
+        output += "\n" + "=" * 80 + "\n\n"
         
         for i, entry in enumerate(entries, 1):
             timestamp = entry.get('timestamp', 'N/A')
@@ -528,22 +558,28 @@ def view_audit_logs(limit: int = 10, event_type: Optional[str] = None) -> str:
                 time_str = timestamp
             
             # Status icon
-            status_icon = "✅" if success else "❌"
+            status_icon = "✓" if success else "✗"
             
-            # Build entry line
-            output += f"{i}. [{time_str}] {status_icon} **{action}**\n"
-            output += f"   User: {user_id} | Type: {event_type_val}\n"
+            # Build entry header
+            output += f"[{time_str}] {status_icon} {action}\n"
+            output += f"├─ User: {user_id} ({event_type_val})\n"
             
             # Add relevant details
             if 'model' in details:
-                output += f"   Model: {details['model']}\n"
+                output += f"├─ Model: {details['model']}\n"
+            
             if 'input' in details:
                 input_text = details['input'][:100] + "..." if len(details['input']) > 100 else details['input']
-                output += f"   Input: \"{input_text}\"\n"
+                output += f"├─ Input: \"{input_text}\"\n"
+            
             if 'summary' in details:
-                output += f"   Summary: {details['summary']}\n"
+                summary = details['summary'][:150] + "..." if len(details['summary']) > 150 else details['summary']
+                output += f"├─ Summary: {summary}\n"
+            
             if 'error' in entry:
-                output += f"   ⚠️ Error: {entry['error']}\n"
+                output += f"└─ ⚠️ Error: {entry['error']}\n"
+            else:
+                output += f"└─ Status: OK\n"
             
             output += "\n"
         
