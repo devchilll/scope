@@ -11,21 +11,13 @@ This callback logs the complete interaction flow including:
 import logging
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.models import LlmRequest, LlmResponse
-from .safety import TextSafetyTool, ImageSafetyTool
+from .safety import ImageSafetyTool
 from .logging import get_audit_logger, AuditEventType
 
 logger = logging.getLogger(__name__)
 
 # Lazy loading globals
-_TEXT_TOOL = None
 _IMAGE_TOOL = None
-
-def get_text_tool():
-    global _TEXT_TOOL
-    if _TEXT_TOOL is None:
-        logger.info("Initializing TextSafetyTool (Lazy Load)...")
-        _TEXT_TOOL = TextSafetyTool()
-    return _TEXT_TOOL
 
 def get_image_tool():
     global _IMAGE_TOOL
@@ -65,7 +57,7 @@ def fast_guardrail_callback(
     )
     
     # DISABLED: ML-based text safety check has too many false positives
-    # The offensive_speech_detection model flags normal queries like "hello who are you"
+    # DISABLED: Text safety check handled by unitary/toxic-bert in observability_tools.py
     # We'll rely on LLM-based safety in the agent prompt instead
     
     # Text Check (DISABLED)

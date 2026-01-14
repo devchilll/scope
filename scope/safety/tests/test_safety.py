@@ -1,44 +1,11 @@
-"""Unit tests for Safety Pillar (Text and Image safety tools)."""
+"""Unit tests for Safety Pillar (Image safety tool).
+
+Note: Text safety checking is handled by unitary/toxic-bert via Detoxify
+in scope/observability_tools.py (safety_check_layer1 function).
+"""
 
 import pytest
-from scope.safety import TextSafetyTool, ImageSafetyTool
-
-
-class TestTextSafetyTool:
-    """Test text safety checking."""
-    
-    def test_initialization(self):
-        """Test tool initializes correctly."""
-        tool = TextSafetyTool()
-        assert tool.classifier is not None
-    
-    def test_safe_text(self):
-        """Test that safe text passes."""
-        tool = TextSafetyTool()
-        result = tool.check("Hello, how are you today?")
-        
-        assert "is_safe" in result
-        assert "risk_category" in result
-        assert "confidence" in result
-        assert isinstance(result["is_safe"], bool)
-        assert isinstance(result["confidence"], float)
-    
-    def test_offensive_text(self):
-        """Test that offensive text is detected."""
-        tool = TextSafetyTool()
-        # Using a clearly offensive example
-        result = tool.check("You are stupid and worthless")
-        
-        assert "is_safe" in result
-        assert "risk_category" in result
-        # Note: Actual detection depends on model performance
-    
-    def test_error_handling(self):
-        """Test error handling for invalid input."""
-        tool = TextSafetyTool()
-        # Empty string should not crash
-        result = tool.check("")
-        assert "is_safe" in result
+from scope.safety import ImageSafetyTool
 
 
 class TestImageSafetyTool:

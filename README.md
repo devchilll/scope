@@ -133,7 +133,7 @@ Human Review Queue (Role-based access)
 scope/
 ├── safety/              # Pillar 1: Text/Image safety tools
 │   ├── __init__.py
-│   └── tools.py         # TextSafetyTool, ImageSafetyTool
+│   └── tools.py         # ImageSafetyTool
 ├── rules/               # Pillar 2: Compliance rules (YAML)
 │   ├── __init__.py
 │   └── compliance_rules.yaml
@@ -232,9 +232,10 @@ uv run adk run scope
 Fast, multi-modal safety checks using ML models or LLM.
 
 ### Text Safety
-- **Model**: `Falconsai/offensive_speech_detection` (DistilBERT)
-- **Detection**: Offensive language, hate speech, injection attacks
+- **Model**: `unitary/toxic-bert` via Detoxify
+- **Detection**: Toxicity, severe toxicity, obscenity, threats, insults, identity hate
 - **Latency**: ~50ms
+- **Location**: `scope/observability_tools.py` (safety_check_layer1)
 
 ### Image Safety
 - **Model**: `Marqo/nsfw-image-detection-384` (Vision Transformer)

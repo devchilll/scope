@@ -1,56 +1,14 @@
-"""Safety checking tools for text and image content.
+"""Safety checking tools for image content.
 
 This module contains fast safety checks (Layer 2a) using ML models.
+
+Note: Text safety checking is handled by unitary/toxic-bert via Detoxify
+in scope/observability_tools.py (safety_check_layer1 function).
 """
 
 import requests
 from io import BytesIO
 from PIL import Image
-
-
-class TextSafetyTool:
-    """Text safety checker using transformer-based classification."""
-    
-    def __init__(self):
-        # Lazy import
-        from transformers import pipeline
-        self.classifier = pipeline("text-classification", model="Falconsai/offensive_speech_detection")
-
-    def check(self, text: str, threshold: float = 0.95) -> dict:
-        """Check text for offensive content.
-        
-        Args:
-            text: Text to check
-            threshold: Confidence threshold for blocking (default: 0.95)
-                      Only block if model is very confident (>95%)
-            
-        Returns:
-            Dict with is_safe, risk_category, and confidence
-        """
-        try:
-            results = self.classifier(text)
-            # Result format: [{'label': 'offensive', 'score': 0.99}] or similar
-            
-            result = results[0]
-            label = result['label'].lower()
-            score = result['score']
-            
-            is_safe = True
-            risk_category = "None"
-            
-            # Only block if model is very confident (>95% by default)
-            if "offensive" in label and score > threshold:
-                is_safe = False
-                risk_category = "Offensive"
-            
-            return {
-                "is_safe": is_safe,
-                "risk_category": risk_category,
-                "confidence": score
-            }
-        except Exception as e:
-            print(f"Text safety check failed: {e}")
-            return {"is_safe": True, "risk_category": "Error", "confidence": 0.0}
 
 
 class ImageSafetyTool:

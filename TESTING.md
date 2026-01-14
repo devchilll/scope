@@ -51,13 +51,12 @@ uv run pytest prime_guardrails/iam/tests/test_iam.py::TestAccessControl::test_ch
 
 ## Test Coverage
 
-### Pillar 1: Safety (6 tests)
-- ✅ TextSafetyTool initialization
-- ✅ Safe text detection
-- ✅ Offensive text detection
-- ✅ Error handling
+### Pillar 1: Safety (2 tests)
 - ✅ ImageSafetyTool initialization
 - ✅ Output format validation
+
+Note: Text safety checking is now handled by `unitary/toxic-bert` via Detoxify 
+in `scope/observability_tools.py` (safety_check_layer1 function).
 
 ### Pillar 2: Compliance (5 tests)
 - ✅ Single rule transformation

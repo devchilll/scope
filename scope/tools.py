@@ -5,7 +5,7 @@ and escalation tools from their respective packages.
 """
 
 # Import from modular packages
-from .safety import TextSafetyTool, ImageSafetyTool
+from .safety import ImageSafetyTool
 from .compliance import transform_rules, format_compliance_section
 from .escalation import EscalationQueue, EscalationTicket, User
 from .iam import UserRole, Permission, AccessControl
@@ -13,7 +13,6 @@ from .iam import UserRole, Permission, AccessControl
 # Export all tools for easy importing
 __all__ = [
     # Safety tools
-    'TextSafetyTool',
     'ImageSafetyTool',
     # Compliance tools
     'transform_rules',
