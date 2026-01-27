@@ -1,4 +1,4 @@
-# SCOPE: Enterprise Agent Governance Framework
+# SCOPE: AI Agent Governance Framework For High-Stake Applications
 
 **SCOPE** (Safety, Compliance, Observability, Permissions, Escalation) is a production-ready governance framework for enterprise AI agents. Built on Google's Agent Development Kit (ADK), it implements a "Defense in Depth" architecture with **5 core pillars**:
 
