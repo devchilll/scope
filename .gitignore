@@ -1,5 +1,6 @@
 *__pycache__*
-*.pdf*
+*.pdf
+article.md
 _cache_img
 google_adk-.*.whl
 _tmp*
