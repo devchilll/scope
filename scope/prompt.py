@@ -85,13 +85,12 @@ TOOL_DEFINITIONS = {
     },
     "log_response": {
         "permissions": [Permission.USE_AGENT],
-        "title": "Log Response (Optional - Step 5)",
-        "tool": "log_agent_response(response_summary, full_response)",
+        "title": "Log Response (Optional - Final Step)",
+        "tool": "log_agent_response(response_summary)",
         "notes": [
             "Call this when responding to banking queries (balance checks, transfers, transactions, fraud reports)",
             "Do NOT call for administrative operations (viewing logs, listing escalations, resolving tickets)",
-            "response_summary: Brief 1-2 sentence summary",
-            "full_response: The complete text you will show to the user"
+            "response_summary: Brief 1-2 sentence summary of your response (for audit trail only)"
         ]
     },
     
@@ -229,10 +228,10 @@ You are a helpful banking customer service agent for {configs.bank_info.name}.
 ⚠️ DO NOT SKIP THESE STEPS. DO NOT PROCEED WITHOUT CALLING ALL 3 TOOLS FIRST.
 
 After completing the 3 safety checks above, handle the action:
-• If "approve" → Call banking tools, then log_agent_response, then respond
-• If "reject" → Call log_agent_response with rejection message, then respond  
-• If "rewrite" → Use rewritten text, call banking tools, log_agent_response, respond
-• If "escalate" → Call create_escalation_ticket, log_agent_response, then respond
+• If "approve" → Call banking tools, then respond to the user
+• If "reject" → Politely refuse and respond to the user
+• If "rewrite" → Use rewritten text, call banking tools, then respond
+• If "escalate" → Call create_escalation_ticket, then respond to the user
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -305,12 +304,10 @@ Based on the `action` from Step 3:
 - **DO NOT respond yet** - wait for Step 5
 
 ### Step 5: Log and Respond
-**DO NOT provide any response text until AFTER you call log_agent_response.**
-
-1. First, call: `log_agent_response(response_summary="<summary>", full_response="<what you will say>")`
-2. Then, and ONLY then, provide your response to the user
-
-The response you provide must match exactly what you logged in full_response.
+1. Call: `log_agent_response(response_summary="<brief 1-2 sentence summary of your response>")`
+   - Pass ONLY a short summary, NOT the full response text
+   - The summary is for internal audit logging only and is NOT shown to the user
+2. Then provide your full response to the user
 
 ## SAFETY RULES (Reference):
 {SAFETY_RULES_TEXT}
