@@ -17,9 +17,25 @@ from scope.observability_tools import (
 from scope.config import Config
 
 
+def _has_gcp_credentials() -> bool:
+    """Layer 2 / decision tools call Gemini on Vertex AI and need ADC."""
+    import os
+    if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+        return True
+    adc = Path.home() / ".config" / "gcloud" / "application_default_credentials.json"
+    return adc.exists()
+
+
+requires_llm = pytest.mark.skipif(
+    not _has_gcp_credentials(),
+    reason="Requires Google Cloud credentials (gcloud auth application-default login)",
+)
+
+
 class TestRoleAwareSafetyChecks:
     """Test that safety checks are aware of user roles."""
     
+    @requires_llm
     def test_staff_can_view_escalation_tickets(self):
         """STAFF users should be able to request to view escalation tickets without triggering safety violations."""
         # Set up STAFF user context
@@ -171,6 +187,7 @@ class TestIAMPermissions:
 class TestSafetyDecisionMaking:
     """Test the safety decision-making process."""
     
+    @requires_llm
     def test_high_scores_approve(self):
         """High safety scores should result in approve action."""
         analysis = {
@@ -188,6 +205,7 @@ class TestSafetyDecisionMaking:
         
         assert decision['action'] == 'approve'
     
+    @requires_llm
     def test_low_scores_reject(self):
         """Very low safety scores should result in reject action."""
         analysis = {
