@@ -1,11 +1,18 @@
-"""Safety module for PRIME guardrails.
+"""Safety module for SCOPE guardrails (Layer 2a: fast ML checks).
 
-This package contains safety checking tools for image content.
-
-Note: Text safety checking is handled by unitary/toxic-bert via Detoxify
-in scope/observability_tools.py (safety_check_layer1 function).
+- ``TextSafetyTool`` / ``get_text_tool``: unitary/toxic-bert text classifier.
+  Used by the ``before_model_callback`` to screen every user turn *before*
+  the LLM runs, and by the ``safety_check_layer1`` tool for trace visibility.
+- ``ImageSafetyTool``: NSFW image classifier.
 """
 
 from .tools import ImageSafetyTool
+from .text import TextSafetyTool, get_text_tool, set_text_tool, MODEL_NAME
 
-__all__ = ['ImageSafetyTool']
+__all__ = [
+    'ImageSafetyTool',
+    'TextSafetyTool',
+    'get_text_tool',
+    'set_text_tool',
+    'MODEL_NAME',
+]

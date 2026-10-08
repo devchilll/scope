@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 class AgentModel(BaseModel):
     """Agent model settings."""
     name: str = Field(default="scope_safety_router")
-    model: str = Field(default="gemini-2.0-flash-live-001")
+    model: str = Field(default="gemini-2.5-flash")
 
 class BankInfo(BaseModel):
     """Bank contact and information settings."""

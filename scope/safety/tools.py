@@ -2,8 +2,8 @@
 
 This module contains fast safety checks (Layer 2a) using ML models.
 
-Note: Text safety checking is handled by unitary/toxic-bert via Detoxify
-in scope/observability_tools.py (safety_check_layer1 function).
+Note: Text safety checking lives in ``scope/safety/text.py`` (TextSafetyTool),
+which is shared by the before_model_callback and the safety_check_layer1 tool.
 """
 
 import requests

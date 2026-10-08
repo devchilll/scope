@@ -18,7 +18,7 @@ class TestAgentInitialization:
     def test_agent_exists(self):
         """Test that agent is initialized."""
         assert root_agent is not None
-        assert root_agent.name == "prime_safety_router"
+        assert root_agent.name == "scope_safety_router"
     
     def test_config_loaded(self):
         """Test configuration is loaded correctly."""
@@ -42,11 +42,13 @@ class TestSafetyLayer:
         assert fast_guardrail_callback is not None
     
     def test_offensive_input_blocked(self):
-        """Test that offensive input is blocked."""
-        # Text safety checking is now handled by unitary/toxic-bert via Detoxify
-        # in scope/observability_tools.py (safety_check_layer1 function)
-        from scope.observability_tools import safety_model
-        assert safety_model is not None
+        """Test that the pre-model classifier is wired up.
+
+        Behavioural tests (block / pass) live in tests/test_callbacks.py with a
+        fake model; here we only verify the real tool is reachable.
+        """
+        from scope.safety import get_text_tool
+        assert get_text_tool() is not None
 
 
 class TestComplianceEnforcement:
@@ -74,7 +76,7 @@ class TestAgentActions:
         """Test ALLOW action for safe input."""
         # Would test actual agent response
         # Verifying action types are defined
-        expected_actions = ["ALLOW", "REFUSE", "REWRITE", "ESCALATE"]
+        expected_actions = ["approve", "reject", "rewrite", "escalate"]
         from scope.prompt import ROUTER_INSTRUCTIONS
         for action in expected_actions:
             assert action in ROUTER_INSTRUCTIONS
@@ -133,32 +135,33 @@ class TestCallbackIntegration:
     
     def test_callback_registered(self):
         """Test that safety callback is registered."""
-        # Verify callback is attached to agent
-        assert hasattr(root_agent, 'before_model_callbacks')
+        # Verify the pre-model safety gate is attached to the agent
+        from scope.callbacks import fast_guardrail_callback, after_model_callback
+        assert fast_guardrail_callback in root_agent.canonical_before_model_callbacks
+        assert after_model_callback in root_agent.canonical_after_model_callbacks
 
 
 class TestPromptConstruction:
     """Test agent prompt construction."""
     
     def test_prompt_includes_safety_policy(self):
-        """Test prompt includes safety policy."""
+        """Prompt instructs the agent to run the layered safety tools in order."""
         from scope.prompt import ROUTER_INSTRUCTIONS
-        assert "SAFETY POLICY" in ROUTER_INSTRUCTIONS
+        assert "safety_check_layer1" in ROUTER_INSTRUCTIONS
+        assert "safety_check_layer2" in ROUTER_INSTRUCTIONS
+        assert "make_safe_and_compliant_decision" in ROUTER_INSTRUCTIONS
+        assert ROUTER_INSTRUCTIONS.index("safety_check_layer1") < ROUTER_INSTRUCTIONS.index("safety_check_layer2")
     
     def test_prompt_includes_actions(self):
-        """Test prompt includes all actions."""
+        """Prompt describes all four decision actions."""
         from scope.prompt import ROUTER_INSTRUCTIONS
-        assert "ALLOW" in ROUTER_INSTRUCTIONS
-        assert "REFUSE" in ROUTER_INSTRUCTIONS
-        assert "REWRITE" in ROUTER_INSTRUCTIONS
-        assert "ESCALATE" in ROUTER_INSTRUCTIONS
+        for action in ("approve", "reject", "rewrite", "escalate"):
+            assert action in ROUTER_INSTRUCTIONS
     
-    def test_prompt_includes_output_format(self):
-        """Test prompt includes JSON output format."""
+    def test_prompt_includes_escalation_handling(self):
+        """Prompt tells the agent how to escalate."""
         from scope.prompt import ROUTER_INSTRUCTIONS
-        assert "OUTPUT FORMAT" in ROUTER_INSTRUCTIONS
-        assert "action" in ROUTER_INSTRUCTIONS
-        assert "confidence" in ROUTER_INSTRUCTIONS
+        assert "create_escalation_ticket" in ROUTER_INSTRUCTIONS
 
 
 if __name__ == "__main__":

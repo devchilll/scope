@@ -11,7 +11,7 @@ dependencies = [
     "google-generativeai",
     "pydantic-settings>=2.0.0",
     "torch==2.2.2",
-    "transformers",
+    "transformers>=4.40,<5",  # transformers 5.x requires torch>=2.4; torch is pinned to 2.2.2
     "timm",
     "pillow",
     "requests",

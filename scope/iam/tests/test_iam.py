@@ -41,7 +41,9 @@ class TestPermissions:
         """Test STAFF role permissions."""
         perms = get_permissions(UserRole.STAFF)
         assert Permission.VIEW_ALL_ESCALATIONS in perms
-        assert Permission.RESOLVE_ESCALATIONS not in perms
+        # STAFF can resolve tickets (resolve_escalation_ticket tool is STAFF/ADMIN)
+        assert Permission.RESOLVE_ESCALATIONS in perms
+        assert Permission.MODIFY_CONFIG not in perms
     
     def test_admin_permissions(self):
         """Test ADMIN role permissions."""
@@ -133,7 +135,7 @@ class TestAccessControl:
         admin = User("admin1", UserRole.ADMIN)
         
         assert not AccessControl.can_resolve_escalations(user)
-        assert not AccessControl.can_resolve_escalations(staff)
+        assert AccessControl.can_resolve_escalations(staff)
         assert AccessControl.can_resolve_escalations(admin)
 
 

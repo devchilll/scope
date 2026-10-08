@@ -3,17 +3,15 @@
 import pytest
 from pathlib import Path
 from scope.escalation import EscalationQueue, EscalationTicket
+from scope.data import Database
 from scope.iam import User, UserRole, AccessDeniedException
 
 
 @pytest.fixture
-def test_queue():
-    """Create a test queue with temporary database."""
-    test_db = Path(__file__).parent / "test_escalation.db"
-    queue = EscalationQueue(str(test_db))
-    yield queue
-    # Cleanup
-    test_db.unlink(missing_ok=True)
+def test_queue(tmp_path):
+    """Create a test queue backed by a temporary banking database."""
+    db = Database(str(tmp_path / "test_escalation.db"))
+    yield EscalationQueue(db)
 
 
 @pytest.fixture
@@ -55,8 +53,8 @@ class TestEscalationQueue:
     
     def test_queue_initialization(self, test_queue):
         """Test queue initializes correctly."""
-        assert test_queue.db_path is not None
-        assert Path(test_queue.db_path).exists()
+        assert test_queue.db.db_path is not None
+        assert Path(test_queue.db.db_path).exists()
     
     def test_add_ticket(self, test_queue, sample_ticket):
         """Test adding a ticket."""
@@ -66,7 +64,8 @@ class TestEscalationQueue:
     def test_get_pending_tickets(self, test_queue, sample_ticket):
         """Test retrieving pending tickets."""
         test_queue.add_ticket(sample_ticket)
-        pending = test_queue.get_pending_tickets()
+        staff = User("staff1", UserRole.STAFF)
+        pending = test_queue.view_tickets(staff, status="pending")
         assert len(pending) >= 1
         assert all(t.status == "pending" for t in pending)
     
@@ -102,30 +101,36 @@ class TestEscalationQueue:
         ticket_id = test_queue.add_ticket(sample_ticket)
         
         admin = User("admin1", UserRole.ADMIN)
-        success = test_queue.resolve_ticket(
-            admin, ticket_id, "approved", "Looks good"
-        )
+        success = test_queue.resolve_ticket(admin, ticket_id, "Looks good")
         
         assert success is True
+        resolved = test_queue.view_tickets(admin, status="resolved")
+        assert any(t.id == ticket_id for t in resolved)
     
-    def test_resolve_ticket_staff_denied(self, test_queue, sample_ticket):
-        """Test STAFF cannot resolve tickets."""
+    def test_resolve_ticket_staff_allowed(self, test_queue, sample_ticket):
+        """STAFF can resolve tickets (resolve_escalation_ticket tool is STAFF/ADMIN)."""
         ticket_id = test_queue.add_ticket(sample_ticket)
         
         staff = User("staff1", UserRole.STAFF)
+        assert test_queue.resolve_ticket(staff, ticket_id, "Test") is True
+    
+    def test_resolve_ticket_user_denied(self, test_queue, sample_ticket):
+        """USER cannot resolve tickets."""
+        ticket_id = test_queue.add_ticket(sample_ticket)
+        
+        user = User("user", UserRole.USER)
         with pytest.raises(AccessDeniedException):
-            test_queue.resolve_ticket(
-                staff, ticket_id, "approved", "Test"
-            )
+            test_queue.resolve_ticket(user, ticket_id, "Test")
     
     def test_get_stats(self, test_queue, sample_ticket):
         """Test queue statistics."""
         test_queue.add_ticket(sample_ticket)
         
-        stats = test_queue.get_stats()
+        admin = User("admin1", UserRole.ADMIN)
+        stats = test_queue.get_statistics(admin)
         assert "total" in stats
         assert "pending" in stats
-        assert "approved" in stats
+        assert "resolved" in stats
         assert "avg_confidence" in stats
         assert stats["total"] >= 1
 
@@ -134,18 +139,16 @@ class TestDatabaseLocation:
     """Test database storage location."""
     
     def test_default_location(self):
-        """Test default database location."""
+        """Queue shares the main banking database by default."""
         queue = EscalationQueue()
-        assert "escalation/data" in queue.db_path
-        assert queue.db_path.endswith("escalations.db")
+        assert "data/storage" in queue.db.db_path.replace("\\", "/")
+        assert queue.db.db_path.endswith("banking.db")
     
-    def test_custom_location(self):
-        """Test custom database location."""
-        custom_path = "custom_test.db"
-        queue = EscalationQueue(custom_path)
-        assert queue.db_path == custom_path
-        # Cleanup
-        Path(custom_path).unlink(missing_ok=True)
+    def test_custom_location(self, tmp_path):
+        """Queue uses whatever database it is given."""
+        custom_path = str(tmp_path / "custom_test.db")
+        queue = EscalationQueue(Database(custom_path))
+        assert queue.db.db_path == custom_path
 
 
 if __name__ == "__main__":

@@ -1,13 +1,14 @@
-# PRIME Test Suite
+# SCOPE Test Suite
 
-Comprehensive unit and integration tests for the PRIME framework's 4 pillars.
+Comprehensive unit and integration tests for the SCOPE framework's 4 pillars.
 
 ## Test Structure
 
 ```
-prime_guardrails/
+scope/
 ├── safety/tests/
-│   └── test_safety.py          # Text & Image safety tools (6 tests)
+│   ├── test_safety.py          # Image safety tool
+│   └── test_text_safety.py     # Text safety classifier (fake model)
 ├── compliance/tests/
 │   └── test_compliance.py      # Rule transformation (5 tests)
 ├── iam/tests/
@@ -16,7 +17,8 @@ prime_guardrails/
     └── test_escalation.py      # Queue, tickets, SQLite (14 tests)
 
 tests/
-└── test_agent_integration.py   # Agentic system integration (18 tests)
+├── test_callbacks.py           # Pre-model safety gate (before_model_callback)
+└── test_agent_integration.py   # Agentic system integration
 ```
 
 ## Running Tests
@@ -29,16 +31,16 @@ uv run pytest -v
 ### By Pillar
 ```bash
 # Safety
-uv run pytest prime_guardrails/safety/tests/ -v
+uv run pytest scope/safety/tests/ -v
 
 # Compliance
-uv run pytest prime_guardrails/compliance/tests/ -v
+uv run pytest scope/compliance/tests/ -v
 
 # IAM
-uv run pytest prime_guardrails/iam/tests/ -v
+uv run pytest scope/iam/tests/ -v
 
 # Escalation
-uv run pytest prime_guardrails/escalation/tests/ -v
+uv run pytest scope/escalation/tests/ -v
 
 # Integration
 uv run pytest tests/ -v
@@ -46,17 +48,24 @@ uv run pytest tests/ -v
 
 ### Specific Test
 ```bash
-uv run pytest prime_guardrails/iam/tests/test_iam.py::TestAccessControl::test_check_permission_allowed -v
+uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permission_allowed -v
 ```
 
 ## Test Coverage
 
-### Pillar 1: Safety (2 tests)
+### Pillar 1: Safety
 - ✅ ImageSafetyTool initialization
 - ✅ Output format validation
+- ✅ TextSafetyTool: safe / toxic / severe-toxicity / threshold / empty input / model unavailable
+  (`scope/safety/tests/test_text_safety.py`, fake model - no download)
 
-Note: Text safety checking is now handled by `unitary/toxic-bert` via Detoxify 
-in `scope/observability_tools.py` (safety_check_layer1 function).
+### Pre-model safety gate (`tests/test_callbacks.py`)
+- ✅ Only the latest user turn is screened (model turns ignored)
+- ✅ Safe input continues to the LLM
+- ✅ Toxic input returns a refusal `LlmResponse` before the model is called
+- ✅ Check runs on every request
+- ✅ Model unavailable → logged, fails open to Layer 2b
+- ✅ `GOOGLE_SAFETY_USE_ML_MODELS=false` → classifier skipped (logged)
 
 ### Pillar 2: Compliance (5 tests)
 - ✅ Single rule transformation

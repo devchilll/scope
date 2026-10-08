@@ -4,8 +4,9 @@ These tools make safety checks and logging visible as explicit tool calls
 in the ADK web UI trace viewer.
 
 Architecture:
-- Layer 1: Fast ML-based safety check (mock for now)
-- Layer 2: LLM-based safety & compliance check with structured JSON output
+- Layer 1 (2a): Fast ML-based safety check (unitary/toxic-bert). Also runs in the
+  before_model_callback, so every request is screened before the LLM acts.
+- Layer 2 (2b): LLM-based safety & compliance check with structured JSON output
 """
 
 import json
@@ -28,56 +29,54 @@ genai_client = Client(
 )
 
 
-from detoxify import Detoxify
-
-# Initialize Detoxify model (loads once at startup)
-# model_type='original' uses unitary/toxic-bert
-try:
-    print("Loading safety model (unitary/toxic-bert)... this may take a moment.")
-    safety_model = Detoxify('original', device='cpu')
-    print("Safety model loaded successfully.")
-except Exception as e:
-    print(f"Warning: Failed to load safety model: {e}. Layer 1 check will be disabled.")
-    safety_model = None
+from .safety import get_text_tool, MODEL_NAME as SAFETY_MODEL_NAME
 
 
 def safety_check_layer1(user_input: str) -> str:
-    """Layer 1: Fast ML-based safety check using unitary/toxic-bert.
-    
+    """Layer 1 (2a): Fast ML-based safety check using unitary/toxic-bert.
+
+    The same classifier already screened this input in the before_model_callback
+    before the LLM ran; this tool re-runs it so the result is visible as an
+    explicit step in the ADK trace viewer.
+
     Checks for toxicity, severe toxicity, obscenity, threat, insult, and identity hate.
-    
+
     Args:
         user_input: The user's input text to check
-        
+
     Returns:
         Safety check result string
     """
-    if not safety_model:
-        return "⚠️ Layer 1 Safety Check SKIPPED (Model not loaded)."
+    text_tool = get_text_tool()
+    result = text_tool.check(user_input)
 
-    # Run prediction
-    results = safety_model.predict(user_input)
-    
-    # Check for toxicity > 0.7
-    toxicity_score = results.get('toxicity', 0.0)
-    severe_toxicity = results.get('severe_toxicity', 0.0)
-    
     # Log the Layer 1 check
     audit_logger.log_event(
         event_type=AuditEventType.USER_QUERY,
         user_id=config.IAM_CURRENT_USER_ID,
         action="safety_layer1_check",
+        success=result["checked"],
+        error=result.get("error"),
         details={
             "input": user_input[:200],
-            "model": "unitary/toxic-bert",
-            "scores": {k: float(v) for k, v in results.items()}
-        }
+            "model": SAFETY_MODEL_NAME,
+            "checked": result["checked"],
+            "is_safe": result["is_safe"],
+            "risk_category": result["risk_category"],
+            "scores": result["scores"],
+        },
     )
-    
-    if toxicity_score > 0.7 or severe_toxicity > 0.5:
-        return f"⚠️ Layer 1 (ML) Safety Check FAILED. Toxicity: {toxicity_score:.2f}. Request blocked."
-    else:
-        return f"✅ Layer 1 (ML) Safety Check PASSED. Toxicity: {toxicity_score:.2f}. Proceeding to Layer 2."
+
+    if not result["checked"]:
+        return "⚠️ Layer 1 Safety Check SKIPPED (model not loaded). Proceed to Layer 2 with extra caution."
+
+    toxicity_score = result["scores"].get("toxicity", 0.0)
+    if not result["is_safe"]:
+        return (
+            f"⚠️ Layer 1 (ML) Safety Check FAILED. "
+            f"Category: {result['risk_category']} ({result['confidence']:.2f}). Request blocked."
+        )
+    return f"✅ Layer 1 (ML) Safety Check PASSED. Toxicity: {toxicity_score:.2f}. Proceeding to Layer 2."
 
 
 def safety_check_layer2(user_input: str) -> str:
