@@ -28,13 +28,15 @@ ALL_TOOLS = BANKING_TOOLS + OBSERVABILITY_TOOLS
 
 # Define the root agent
 root_agent = LlmAgent(
-    name="scope_safety_router",
-    model="gemini-2.5-flash",
+    name=configs.agent_settings.name,
+    model=configs.agent_settings.model,
     instruction=ROUTER_INSTRUCTIONS,
     tools=ALL_TOOLS,  # Add banking + observability tools
-    # Callbacks commented out - using explicit tools instead for visibility in trace viewer
-    # before_model_callback=fast_guardrail_callback,
-    # after_model_callback=after_model_callback,
+    # Layer 2a: every request is screened by the ML safety check BEFORE the
+    # model runs. The explicit safety_check_layer1/2 tools remain for trace
+    # visibility and Layer 2b (LLM contextual) checks.
+    before_model_callback=fast_guardrail_callback,
+    after_model_callback=after_model_callback,
     generate_content_config=genai_types.GenerateContentConfig(
         temperature=0.7,  # More natural responses
         # Removed response_mime_type - let agent respond naturally

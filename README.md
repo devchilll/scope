@@ -23,9 +23,14 @@ SCOPE is designed for **mission-critical applications** where safety, compliance
 User Input: "What's my account balance?"
     ↓
 ┌─────────────────────────────────────────┐
-│ Safety Check (before_model_callback)   │
-│ - ML-based safety (disabled for now)   │
-│ - Log user input                        │
+│ Layer 2a: Pre-Model Safety Gate         │
+│ (before_model_callback, every request)  │
+│ - Log user input (audit trail)          │
+│ - ML safety check: unitary/toxic-bert   │
+│   (toxicity, threat, insult, obscene,   │
+│    identity attack, severe toxicity)    │
+│ - Unsafe → refusal returned, LLM never  │
+│   called, safety_block logged           │
 └─────────────────────────────────────────┘
     ↓ (if safe)
 ┌─────────────────────────────────────────┐
@@ -92,7 +97,7 @@ Response: "Your current balance is $1,234.56"
 | **ESCALATE** | Low confidence or complex | Add to human review queue | "Transfer $100,000" → Escalation ticket |
 
 **Key Features:**
-- 🛡️ **Pre-LLM Safety**: Blocks malicious inputs before expensive LLM calls
+- 🛡️ **Pre-LLM Safety**: Every request is screened by an ML classifier in `before_model_callback` before the model acts; flagged inputs never reach the LLM
 - 🔐 **Role-Based Access**: USER/STAFF/ADMIN with granular permissions
 - 📊 **Database Tools**: IAM-protected queries to user/account/transaction tables
 - 📝 **Audit Logging**: Every action logged for compliance (PCI-DSS, SOC2)
@@ -118,7 +123,7 @@ Human Review Queue (Role-based access)
 
 ### The 6 Core Modules
 
-1. **Safety** - Fast ML-based + LLM contextual safety checks
+1. **Safety** - Fast ML-based pre-model gate (`before_model_callback`) + LLM contextual safety checks
 2. **Compliance** - Custom business rules and regulatory requirements
 3. **IAM** - Role-based access control (USER, STAFF, ADMIN, SYSTEM)
 4. **Escalation** - Human-in-the-loop with SQLite queue
@@ -133,6 +138,7 @@ Human Review Queue (Role-based access)
 scope/
 ├── safety/              # Pillar 1: Text/Image safety tools
 │   ├── __init__.py
+│   ├── text.py          # TextSafetyTool (unitary/toxic-bert) - used by callback + tool
 │   └── tools.py         # ImageSafetyTool
 ├── rules/               # Pillar 2: Compliance rules (YAML)
 │   ├── __init__.py
@@ -155,7 +161,7 @@ scope/
 │   └── view_logs.py     # Terminal Log Viewer
 ├── config.py            # 4-pillar configuration
 ├── agent.py             # Main ADK agent
-├── callbacks.py         # Layer 2 safety callbacks
+├── callbacks.py         # before_model (Layer 2a gate) / after_model (audit) callbacks
 ├── prompt.py            # Agent instructions
 ├── observability_tools.py # Traceable tools for ADK
 └── tools.py             # Unified imports
@@ -235,7 +241,13 @@ Fast, multi-modal safety checks using ML models or LLM.
 - **Model**: `unitary/toxic-bert` via Detoxify
 - **Detection**: Toxicity, severe toxicity, obscenity, threats, insults, identity hate
 - **Latency**: ~50ms
-- **Location**: `scope/observability_tools.py` (safety_check_layer1)
+- **Implementation**: `scope/safety/text.py` (`TextSafetyTool`)
+- **Where it runs**:
+  1. `scope/callbacks.py` → `fast_guardrail_callback`, registered as the agent's `before_model_callback`. Runs on **every** request, before the LLM. Blocks by returning a refusal response so the model is never called.
+  2. `scope/observability_tools.py` → `safety_check_layer1` tool. Re-runs the same check so it shows up as an explicit step in the ADK trace viewer.
+- **Thresholds**: block when any score ≥ `GOOGLE_SAFETY_THRESHOLD_HIGH` (default 0.8), or `severe_toxicity` ≥ 0.5
+- **Disable**: `GOOGLE_SAFETY_USE_ML_MODELS=false` skips the classifier (the skip is written to the audit log); Layer 2b LLM checks still run
+- **If the model fails to load**: the request is logged as *unchecked* (`success: false`) and continues to the Layer 2b LLM checks (fail-open). Audit logs make this visible.
 
 ### Image Safety
 - **Model**: `Marqo/nsfw-image-detection-384` (Vision Transformer)
@@ -245,15 +257,25 @@ Fast, multi-modal safety checks using ML models or LLM.
 ### Callback Integration
 
 ```python
-# callbacks.py - before_model_callback
+# agent.py
+root_agent = LlmAgent(
+    ...,
+    before_model_callback=fast_guardrail_callback,  # Layer 2a gate
+    after_model_callback=after_model_callback,      # audit logging
+)
+
+# callbacks.py - before_model_callback (simplified)
 def fast_guardrail_callback(context, llm_request):
-    # Run safety checks BEFORE LLM call
-    text_result = text_tool.check(user_input)
-    if not text_result['is_safe']:
-        # Log and let agent handle with compliance rules
-        logger.warning(f"Unsafe content: {text_result['risk_category']}")
-        return None  # Agent will apply compliance rules
-    return None  # Continue to LLM
+    user_text = extract_latest_user_text(llm_request)
+    audit.log_event(..., action="user_input", ...)
+
+    result = get_text_tool().check(user_text)      # unitary/toxic-bert
+    audit.log_event(..., action="safety_check", details=result)
+
+    if result["checked"] and not result["is_safe"]:
+        audit.log_safety_block(user_id, user_text, result["risk_category"])
+        return LlmResponse(content=refusal)        # LLM is never called
+    return None                                    # Continue to LLM
 ```
 
 **Benefits:**
@@ -550,6 +572,9 @@ compliance.log_soc2_incident(
 # Test all features
 uv run pytest -v
 
+# Pre-model safety gate (fast, no model download)
+uv run pytest tests/test_callbacks.py scope/safety/tests/test_text_safety.py -v
+
 # Test individual pillars
 uv run pytest scope/safety/tests/ -v
 uv run pytest scope/compliance/tests/ -v
@@ -617,8 +642,8 @@ uv run adk web
 
 ```python
 # All actions are automatically logged
-2025-11-28 12:00:00 - INFO - [SCOPE Layer 2] Checking input: What's my balance?
-2025-11-28 12:00:00 - INFO - [SCOPE Layer 2] Passed.
+2025-11-28 12:00:00 - INFO - [SCOPE Layer 2a] Checking input: What's my balance?
+2025-11-28 12:00:00 - INFO - [SCOPE Layer 2a] Passed (max score 0.01).
 2025-11-28 12:00:01 - INFO - [Tool] get_account_balance(user_id=user)
 2025-11-28 12:00:01 - INFO - [Audit] User user queried balance: $1,234.56
 ```
