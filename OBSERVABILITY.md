@@ -1,9 +1,9 @@
-# Observability & Auditing Strategy for PRIME Banking Agent
+# Observability & Auditing Strategy for SCOPE Banking Agent
 
 ## Current Implementation ✅
 
 ### 1. **Flow Logging** (Daily Files)
-- **Location**: `prime_guardrails/logging/audit_logs/audit_YYYY-MM-DD.jsonl`
+- **Location**: `scope/logging/audit_logs/audit_YYYY-MM-DD.jsonl`
 - **Captures**:
   - User input
   - Safety check results
@@ -303,7 +303,7 @@ Cold storage (7 years for compliance):
 
 ```bash
 # View today's audit logs
-tail -f prime_guardrails/logging/audit_logs/audit_$(date +%Y-%m-%d).jsonl | jq '.'
+tail -f scope/logging/audit_logs/audit_$(date +%Y-%m-%d).jsonl | jq '.'
 
 # Search for specific user
 cat audit_*.jsonl | jq 'select(.user_id == "user123")'

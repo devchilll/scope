@@ -58,7 +58,7 @@ To populate the database with sample data for testing:
 
 ```bash
 # From project root
-uv run python prime_guardrails/data/seed_database.py
+uv run python scope/data/seed_database.py
 ```
 
 This creates:
