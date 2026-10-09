@@ -1,12 +1,12 @@
-# SCOPE: AI Agent Governance Framework For High-Stake Applications
+# SCOPE: AI Agent Governance Framework For High-Stakes Applications
 
-**SCOPE** (Safety, Compliance, Observability, Permissions, Escalation) is a production-ready governance framework for enterprise AI agents. Built on Google's Agent Development Kit (ADK), it implements a "Defense in Depth" architecture with **5 core pillars**:
+**SCOPE** (Safety, Compliance, Observability, Permissions, Escalation) is a reference governance framework for enterprise AI agents. Built on Google's Agent Development Kit (ADK), it implements a "Defense in Depth" architecture with **5 pillars**:
 
-- **S**afety Guardrails
-- **C**ompliance & Policy-as-Code
-- **O**bservability & Auditing
-- **P**ermissions & Identity (IAM/ACL)
-- **E**scalation Protocols (Human-in-the-Loop)
+- **S**afety Guardrails: ML pre-model gate + LLM contextual safety
+- **C**ompliance & Policy-as-Code: YAML rules the agent must cite
+- **O**bservability & Auditing: JSONL audit trail, PCI-DSS / SOC2 logs, ADK tracing
+- **P**ermissions & Identity (IAM): USER / STAFF / ADMIN / SYSTEM roles enforced in every tool
+- **E**scalation Protocols: human-in-the-loop review queue
 
 ![SCOPE Web UI](example_web_ui.png)
 *SCOPE agent running in the ADK Web UI*
@@ -15,9 +15,9 @@
 
 ## 🎯 Use Case: Banking Customer Service Agent
 
-SCOPE is designed for **mission-critical applications** where safety, compliance, and auditability are paramount. Example: A banking customer service agent handling account inquiries, transactions, and fraud reports.
+SCOPE is designed for **mission-critical applications** where safety, compliance, and auditability are paramount. The reference implementation is a banking customer service agent (model: `gemini-2.5-flash`) that handles account inquiries, transfers, and fraud reports.
 
-### **Complete Agent Decision Flow**
+### Complete Agent Decision Flow
 
 ```
 User Input: "What's my account balance?"
@@ -34,101 +34,82 @@ User Input: "What's my account balance?"
 └─────────────────────────────────────────┘
     ↓ (if safe)
 ┌─────────────────────────────────────────┐
-│ LLM Decision Engine                     │
-│ - Analyzes user intent                  │
-│ - Checks compliance rules               │
-│ - Decides: APPROVE/REJECT/REWRITE/      │
-│            ESCALATE                      │
-│ - Selects tool if needed                │
+│ LLM Agent (gemini-2.5-flash)            │
+│ Instructed to call, in order:           │
+│  1. safety_check_layer1(user_input)     │  ← same ML check, visible in trace
+│  2. safety_check_layer2(user_input)     │  ← Gemini scores request against
+│     → {safety_score, compliance_score,  │    SAFETY-00x / COMP-00x YAML rules
+│        confidence, violated_rules, ...} │
+│  3. make_safe_and_compliant_decision()  │  ← Gemini verdict, role-aware
+│     → {"action": "approve" | "reject" | │
+│        "rewrite" | "escalate", ...}     │
 └─────────────────────────────────────────┘
     ↓
 ┌─────────────────────────────────────────┐
-│ Decision: APPROVE                       │
-│ {                                        │
-│   "decision": "APPROVE",                │
-│   "action": "get_account_balance",      │
-│   "parameters": {"account_id": "acc1"}, │
-│   "reasoning": "User wants balance",    │
-│   "confidence": 0.95                    │
-│ }                                        │
+│ Agent Executes Decision                 │
+│ approve  → call banking tool            │
+│ reject   → polite refusal + rule cited  │
+│ rewrite  → re-process compliant phrasing│
+│ escalate → create_escalation_ticket()   │
+└─────────────────────────────────────────┘
+    ↓ (approve path)
+┌─────────────────────────────────────────┐
+│ Tool: get_account_balance(account_id)   │
+│ - IAM check (role + account ownership)  │
+│ - Query SQLite banking database         │
+│ - Audit log + PCI-DSS data-access log   │
 └─────────────────────────────────────────┘
     ↓
 ┌─────────────────────────────────────────┐
-│ System Executes Decision                │
-│                                          │
-│ If APPROVE → Call tool                  │
-│ If REJECT → Return refusal message      │
-│ If REWRITE → Rewrite & re-process       │
-│ If ESCALATE → Add to escalation queue   │
-└─────────────────────────────────────────┘
-    ↓ (APPROVE path)
-┌─────────────────────────────────────────┐
-│ Tool: get_account_balance(account_id)  │
-│ - IAM check (user can access account)  │
-│ - Query database                        │
-│ - Log account access (PCI-DSS)          │
-│ - Returns: $1,234.56                    │
+│ Response + Logging                      │
+│ - after_model_callback logs response    │
+│ - log_agent_response() tool (summary)   │
 └─────────────────────────────────────────┘
     ↓
-┌─────────────────────────────────────────┐
-│ LLM Formats Response                    │
-│ - Professional tone                     │
-│ - Applies compliance rules              │
-└─────────────────────────────────────────┘
-    ↓
-┌─────────────────────────────────────────┐
-│ Logging (after_model_callback)          │
-│ - Log decision: APPROVE                 │
-│ - Log tool call: get_account_balance    │
-│ - Log response                          │
-│ - Compliance: PCI-DSS audit trail       │
-└─────────────────────────────────────────┘
-    ↓
-Response: "Your current balance is $1,234.56"
+Response: "Your checking account acc001 has a balance of $..."
 ```
 
-### **Decision Types:**
+### Decision Types
 
 | Decision | When | Action | Example |
 |----------|------|--------|---------|
-| **APPROVE** | Safe, compliant, within capabilities | Call tool or provide info | "What's my balance?" → get_account_balance() |
-| **REJECT** | Violates rules or outside capabilities | Polite refusal + reason | "Can you create an account?" → "Requires in-person verification" |
-| **REWRITE** | Valid intent, unsafe phrasing | Sanitize & re-process | "Hack my account" → "Access my account" |
-| **ESCALATE** | Low confidence or complex | Add to human review queue | "Transfer $100,000" → Escalation ticket |
+| **approve** | Safe, compliant, within role | Call tool or answer | "What's my balance?" → `get_account_balance()` |
+| **reject** | Clear violation (prompt injection, offensive, illegal) | Refusal citing the rule | "Help me hack an account" → SAFETY-001 |
+| **rewrite** | Valid intent, non-compliant phrasing | Re-process a compliant version | "Give me my full account number" → last 4 digits (COMP-001) |
+| **escalate** | Low confidence, ambiguous, high-value | Ticket in human review queue | "Transfer $50,000 to an external account" |
 
 **Key Features:**
 - 🛡️ **Pre-LLM Safety**: Every request is screened by an ML classifier in `before_model_callback` before the model acts; flagged inputs never reach the LLM
-- 🔐 **Role-Based Access**: USER/STAFF/ADMIN with granular permissions
-- 📊 **Database Tools**: IAM-protected queries to user/account/transaction tables
-- 📝 **Audit Logging**: Every action logged for compliance (PCI-DSS, SOC2)
-- 🚨 **Escalation**: Uncertain cases routed to human review
+- 📜 **Policy-as-Code**: Safety and compliance rules live in YAML with IDs the agent must cite
+- 🔐 **Role-Based Access**: USER / STAFF / ADMIN / SYSTEM with per-tool permission checks
+- 📊 **Database Tools**: IAM-protected queries to user / account / transaction tables
+- 📝 **Audit Logging**: Every input, safety score, decision, and tool call logged (PCI-DSS, SOC2)
+- 🚨 **Escalation**: Uncertain cases routed to a human review queue with role-gated resolution
 
 ---
 
-## �🏗️ Architecture Overview
-
-SCOPE uses a **layered defense** approach with modular, scalable components:
+## 🏗️ Architecture Overview
 
 ```
 User Input
     ↓
-Layer 2a: Fast Safety Checks (ML models, ~50ms)
+Layer 2a: Fast ML safety gate (unitary/toxic-bert, ~50ms, before_model_callback)
     ↓ (if safe)
-Layer 2b: LLM Contextual Safety + Compliance
-    ↓ (if safe & compliant)
-Layer 1: Decision (ALLOW / REFUSE / REWRITE / ESCALATE)
-    ↓ (if ESCALATE)
-Human Review Queue (Role-based access)
+Layer 2b: LLM contextual safety + compliance analysis (safety_check_layer2)
+    ↓
+Layer 1:  Decision (approve / reject / rewrite / escalate), role-aware
+    ↓ (if escalate)
+Human Review Queue (STAFF/ADMIN resolve via resolve_escalation_ticket)
 ```
 
 ### The 6 Core Modules
 
-1. **Safety** - Fast ML-based pre-model gate (`before_model_callback`) + LLM contextual safety checks
-2. **Compliance** - Custom business rules and regulatory requirements
-3. **IAM** - Role-based access control (USER, STAFF, ADMIN, SYSTEM)
-4. **Escalation** - Human-in-the-loop with SQLite queue
-5. **Data** - Banking database with IAM-protected operations
-6. **Logging** - Audit trail and compliance logging (PCI-DSS, SOC2)
+1. **Safety** (`scope/safety/`, `scope/callbacks.py`) - ML pre-model gate + LLM contextual checks
+2. **Compliance** (`scope/rules/`, `scope/compliance/`) - YAML safety/compliance rules with IDs
+3. **IAM** (`scope/iam/`) - Roles, permissions, access control
+4. **Escalation** (`scope/escalation/`) - Human-in-the-loop ticket queue
+5. **Data** (`scope/data/`) - SQLite banking database + IAM-protected agent tools
+6. **Logging** (`scope/logging/`) - Audit trail, compliance logs, terminal viewer
 
 ---
 
@@ -136,35 +117,40 @@ Human Review Queue (Role-based access)
 
 ```
 scope/
-├── safety/              # Pillar 1: Text/Image safety tools
-│   ├── __init__.py
-│   ├── text.py          # TextSafetyTool (unitary/toxic-bert) - used by callback + tool
-│   └── tools.py         # ImageSafetyTool
-├── rules/               # Pillar 2: Compliance rules (YAML)
-│   ├── __init__.py
-│   └── compliance_rules.yaml
-├── iam/                 # Pillar 3: Access control
-│   ├── __init__.py
-│   ├── roles.py         # UserRole, Permission enums
-│   └── acl.py           # AccessControl, User class
-├── escalation/          # Pillar 4: Human review queue
-│   ├── __init__.py
-│   ├── models.py        # EscalationTicket model
-│   ├── queue.py         # SQLite-based queue
-│   └── data/            # Database storage
-├── data/                # Database layer (for tools)
-│   ├── models.py        # User, Account, Transaction
-│   └── database.py      # DB queries
-├── logging/             # Audit trail
-│   ├── audit.py         # Transaction logging
-│   ├── compliance_log.py # Regulatory logs
-│   └── view_logs.py     # Terminal Log Viewer
-├── config.py            # 4-pillar configuration
-├── agent.py             # Main ADK agent
-├── callbacks.py         # before_model (Layer 2a gate) / after_model (audit) callbacks
-├── prompt.py            # Agent instructions
-├── observability_tools.py # Traceable tools for ADK
-└── tools.py             # Unified imports
+├── agent.py               # Root LlmAgent: tools + before/after model callbacks
+├── callbacks.py           # before_model (Layer 2a gate) / after_model (audit) callbacks
+├── prompt.py              # Agent instructions (role-aware tool definitions, rules)
+├── config.py              # Pydantic settings (GOOGLE_* env vars)
+├── observability_tools.py # safety_check_layer1/2, decision, escalation, log tools
+├── tools.py               # Convenience re-exports
+├── safety/                # Pillar 1
+│   ├── text.py            # TextSafetyTool (unitary/toxic-bert) - used by callback + tool
+│   └── tools.py           # ImageSafetyTool (NSFW classifier)
+├── rules/                 # Pillar 2: policy-as-code
+│   ├── safety_rules.yaml      # SAFETY-001..005
+│   ├── compliance_rules.yaml  # COMP-001..007
+│   └── loader.py          # Renders rules into prompt text
+├── compliance/            # Rule transformation helpers + industry example rule sets
+├── iam/                   # Pillar 3
+│   ├── roles.py           # UserRole, Permission, role → permission map
+│   └── acl.py             # User, AccessControl, AccessDeniedException
+├── escalation/            # Pillar 4
+│   ├── models.py          # EscalationTicket
+│   └── queue.py           # EscalationQueue (stored in the banking database)
+├── data/                  # Database layer
+│   ├── models.py          # User, Account, Transaction
+│   ├── database.py        # SQLite queries, IAM-protected
+│   ├── tools.py           # Banking tools exposed to the agent
+│   ├── seed_database.py   # Sample data
+│   └── storage/banking.db # SQLite file (git-ignored)
+└── logging/
+    ├── audit.py           # AuditLogger (JSONL)
+    ├── compliance_log.py  # ComplianceLogger (PCI-DSS, SOC2)
+    └── view_logs.py       # Terminal log viewer
+
+tests/                     # Callback + integration tests
+scope/*/tests/             # Per-pillar unit tests
+uscis_eb1a_scraper/        # Separate utility (USCIS AAO decision scraper); not part of SCOPE
 ```
 
 ---
@@ -172,9 +158,9 @@ scope/
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Python 3.10-3.12
+- Python 3.10–3.12
 - [uv](https://github.com/astral-sh/uv) package manager
-- Google Cloud account with Vertex AI enabled
+- Google Cloud project with Vertex AI enabled (Gemini is used for the agent and Layer 2b checks)
 
 ### Installation
 
@@ -187,13 +173,18 @@ gcloud auth login
 gcloud auth application-default login
 gcloud config set project your-project-id
 
-# Install dependencies
+# Install dependencies (torch, transformers, detoxify, google-adk, ...)
 uv sync
+
+# Seed the banking database with a sample customer and accounts
+uv run python scope/data/seed_database.py
 ```
+
+The first request downloads `unitary/toxic-bert` from Hugging Face (one-time, cached).
 
 ### Configuration
 
-Create `.env` file:
+Create a `.env` file in the project root. All settings are read by `scope/config.py` with the `GOOGLE_` prefix.
 
 ```bash
 # Google Cloud
@@ -202,40 +193,45 @@ GOOGLE_CLOUD_PROJECT=your-project-id
 GOOGLE_CLOUD_LOCATION=us-central1
 
 # Pillar 1: Safety
-GOOGLE_SAFETY_ENABLED=true
 GOOGLE_SAFETY_MODE=STRICT
-GOOGLE_SAFETY_THRESHOLD_HIGH=0.8
+GOOGLE_SAFETY_THRESHOLD_HIGH=0.8      # block when any toxic-bert score >= this
 GOOGLE_SAFETY_THRESHOLD_MEDIUM=0.4
+GOOGLE_SAFETY_USE_ML_MODELS=true      # false skips the pre-model classifier (logged)
 
 # Pillar 2: Compliance
 GOOGLE_COMPLIANCE_ENABLED=true
-GOOGLE_COMPLIANCE_RULES=["Never share full account numbers", "Verify identity before account access"]
+GOOGLE_COMPLIANCE_RULES=["Never share full account numbers"]
 
-# Pillar 3: IAM
+# Pillar 3: IAM - who the agent is acting for (see "Switching roles")
 GOOGLE_IAM_ENABLED=true
-GOOGLE_IAM_DEFAULT_USER_ROLE=USER
+GOOGLE_IAM_CURRENT_USER_ID=user
+GOOGLE_IAM_CURRENT_USER_ROLE=USER     # USER | STAFF | ADMIN | SYSTEM
+GOOGLE_IAM_CURRENT_USER_NAME="Alice Johnson"
 
 # Pillar 4: Escalation
 GOOGLE_ESCALATION_ENABLED=true
 GOOGLE_ESCALATION_THRESHOLD=0.6
-GOOGLE_ESCALATION_STORAGE_TYPE=sqlite
 ```
 
 ### Run the Agent
 
 ```bash
-# Web UI (recommended)
+# Web UI with trace viewer (recommended)
 uv run adk web
 
 # CLI mode
 uv run adk run scope
 ```
 
+### Switching roles
+
+The reference implementation has no login; the acting user comes from `GOOGLE_IAM_CURRENT_USER_ID` / `GOOGLE_IAM_CURRENT_USER_ROLE`. Set the role to `STAFF` or `ADMIN` and restart to try the escalation-queue, audit-log, and cross-customer tools; `USER` is restricted to their own accounts.
+
 ---
 
 ## 🔐 Pillar 1: Safety
 
-Fast, multi-modal safety checks using ML models or LLM.
+Fast, multi-modal safety checks using ML models, backed by LLM contextual analysis.
 
 ### Text Safety
 - **Model**: `unitary/toxic-bert` via Detoxify
@@ -251,8 +247,11 @@ Fast, multi-modal safety checks using ML models or LLM.
 
 ### Image Safety
 - **Model**: `Marqo/nsfw-image-detection-384` (Vision Transformer)
-- **Detection**: NSFW content
-- **Threshold**: Block if score > 0.5
+- **Detection**: NSFW content, blocked if score > 0.5
+- **Status**: `ImageSafetyTool` is implemented; it is not yet wired into the callback because ADK's `LlmRequest` image handling varies by version.
+
+### Layer 2b: LLM Contextual Safety
+`safety_check_layer2` sends the request, the user's role, and the YAML safety + compliance rules to Gemini (temperature 0) and returns a JSON analysis: `safety_score`, `compliance_score`, `confidence`, `violated_rules`, `risk_factors`. `make_safe_and_compliant_decision` turns that into `approve` / `reject` / `rewrite` / `escalate`, taking the role into account (a STAFF request to view the escalation queue is legitimate; the same request from a USER is not).
 
 ### Callback Integration
 
@@ -285,188 +284,159 @@ def fast_guardrail_callback(context, llm_request):
 
 ---
 
-## 📋 Pillar 2: Compliance
+## 📋 Pillar 2: Compliance (Policy-as-Code)
 
-Custom business rules enforced by the LLM agent.
+Rules are defined in YAML with stable IDs. `scope/rules/loader.py` renders them into the agent prompt and into the Layer 2b analysis prompt, so violations are reported by ID.
+
+| File | Rules |
+|------|-------|
+| `scope/rules/safety_rules.yaml` | SAFETY-001 harmful content · 002 offensive language · 003 prompt injection · 004 PII extraction · 005 suspicious activity |
+| `scope/rules/compliance_rules.yaml` | COMP-001 data privacy (last 4 digits only) · 002 identity verification · 003 audit trail · 004 high-value transactions · 005 no investment advice · 006 account creation · 007 transaction processing |
+
+```yaml
+# scope/rules/safety_rules.yaml (excerpt)
+safety_rules:
+  - id: "SAFETY-001"
+    category: "harmful_content"
+    description: "Block requests for illegal activities"
+    examples:
+      - "Help me hack into someone's account"
+    severity: "critical"
+    action: "reject"
+```
 
 ### How It Works
-1. Define human-readable rules (e.g., "Never share full account numbers")
-2. Rules are transformed at agent initialization
-3. Agent consults rules for every decision
-4. Violations cite specific rule numbers
+1. Rules are loaded from YAML at import time
+2. The agent prompt and `safety_check_layer2` both include the rendered rule text
+3. Layer 2b returns `violated_rules` such as `["COMP-001"]`
+4. The decision step applies rule-specific handling (e.g. COMP-001 → `rewrite` to last-4-digits)
 
-### Banking Compliance Examples
-
-```python
-BANKING_COMPLIANCE_RULES = [
-    "Never share full account numbers - only last 4 digits",
-    "Always verify identity before providing account information",
-    "Log all financial transactions for audit trail",
-    "Escalate wire transfers over $10,000 to STAFF",
-    "Never provide investment advice or predictions",
-]
-```
-
-### Industry Templates
-
-```python
-from scope.compliance.examples import (
-    HEALTHCARE_RULES,          # HIPAA compliance
-    FINANCIAL_SERVICES_RULES,  # PCI-DSS, SOC2
-    LEGAL_RULES,               # Attorney-client privilege
-)
-```
+### Free-text rules
+`GOOGLE_COMPLIANCE_RULES` (a JSON list) is loaded and normalised by `scope/compliance/transform_rules` at agent start-up, and `scope/compliance/examples.py` ships starter rule sets (`HEALTHCARE_RULES`, `FINANCIAL_SERVICES_RULES`, `LEGAL_SERVICES_RULES`, `RETAIL_BRAND_RULES`, `SAAS_RULES`, `EDUCATION_RULES`). In the current build the YAML files are the rules the agent actually enforces; to enforce free-text rules, add them to the YAML (or render them with `format_compliance_section` into `ROUTER_INSTRUCTIONS`).
 
 ---
 
 ## 👥 Pillar 3: IAM (Identity & Access Management)
 
-Role-based access control for the entire system.
+Role-based access control enforced inside every tool.
 
 ### User Roles
 
 | Role | Permissions | Use Case |
 |------|-------------|----------|
-| **USER** | Use agent, view own escalations, query own accounts | Banking customers |
-| **STAFF** | + View all escalations (read-only), access customer accounts | Customer service reps |
-| **ADMIN** | + Resolve escalations, modify config, approve transactions | Bank managers |
-| **SYSTEM** | All permissions (internal use) | Automated processes |
+| **USER** | Use agent, view own accounts/transactions, view own escalations | Banking customers |
+| **STAFF** | + View any customer's accounts, view all escalations, resolve escalations, view audit logs | Customer service reps |
+| **ADMIN** | + Modify config, modify compliance rules, manage users | Bank managers |
+| **SYSTEM** | All permissions | Automated processes |
 
-### Usage Example
+Exact mapping: `scope/iam/roles.py` (`ROLE_PERMISSIONS`).
+
+### Usage
 
 ```python
-from scope.iam import User, UserRole, AccessControl
+from scope.iam import User, UserRole, Permission, AccessControl, AccessDeniedException
 
-# Create users
 customer = User("user", UserRole.USER, "Alice")
-rep = User("staff456", UserRole.STAFF, "Bob")
-manager = User("admin789", UserRole.ADMIN, "Charlie")
+rep      = User("staff456", UserRole.STAFF, "Bob")
+manager  = User("admin789", UserRole.ADMIN, "Charlie")
 
-# Check permissions
-customer.has_permission(Permission.VIEW_OWN_ESCALATIONS)  # True
-rep.has_permission(Permission.VIEW_ALL_ESCALATIONS)       # True
-manager.has_permission(Permission.RESOLVE_ESCALATIONS)    # True
+customer.has_permission(Permission.VIEW_OWN_ESCALATIONS)   # True
+rep.has_permission(Permission.RESOLVE_ESCALATIONS)         # True
+manager.has_permission(Permission.MODIFY_CONFIG)           # True
 
-# Access control in tools
-@tool
-def get_account_balance(user: User, account_id: str):
-    # Verify user can access this account
-    AccessControl.check_permission(user, Permission.VIEW_ACCOUNTS)
-    if user.role == UserRole.USER:
-        # Users can only see their own accounts
-        if account_id not in user.account_ids:
-            raise AccessDeniedException()
-    # ... query database
+AccessControl.check_permission(customer, Permission.VIEW_ALL_ESCALATIONS)  # raises AccessDeniedException
+AccessControl.check_permission(customer, Permission.VIEW_ALL_ESCALATIONS, raise_on_deny=False)  # False
 ```
+
+### How tools enforce it
+
+```python
+# scope/data/tools.py (simplified)
+def get_account_balance(account_id: str) -> str:
+    iam_user = get_current_user()                 # from GOOGLE_IAM_CURRENT_USER_*
+    account = db.get_account(iam_user, account_id)  # raises if USER doesn't own it
+    audit_logger.log_account_access(iam_user.user_id, account_id, "view_balance")
+    compliance_logger.log_pci_data_access(iam_user.user_id, "account", account_id, "read")
+    return f"Account {account_id}: ${account.balance:.2f}"
+```
+
+Agent tools: `get_account_balance`, `get_transaction_history`, `get_user_accounts`, `report_fraud`, `transfer_money` (banking); `safety_check_layer1/2`, `make_safe_and_compliant_decision`, `create_escalation_ticket`, `list_escalation_tickets`, `resolve_escalation_ticket`, `view_audit_logs`, `log_agent_response` (governance). The prompt only advertises the tools the current role is permitted to use.
 
 ---
 
 ## 🎫 Pillar 4: Escalation
 
-Human-in-the-loop review queue with SQLite storage.
+Human-in-the-loop review queue. Tickets are stored in the `escalations` table of the banking SQLite database (`scope/data/storage/banking.db`).
 
 ### When Escalation Occurs
-- Agent confidence < threshold (default: 0.6)
-- Edge cases requiring human judgment
-- High-value transactions (e.g., >$10,000)
-- Fraud reports
+- Decision confidence below `GOOGLE_ESCALATION_THRESHOLD` (default 0.6)
+- Ambiguous or off-topic requests, edge cases
+- High-value transactions (COMP-004)
+- Errors in the decision step fail safe to `escalate`
 
-### SQLite Queue
+### API
 
 ```python
 from scope.escalation import EscalationQueue, EscalationTicket
 from scope.iam import User, UserRole
 
-queue = EscalationQueue()
+queue = EscalationQueue()          # or EscalationQueue(Database("path.db"))
 
-# Add ticket (agent)
+# Agent side
 ticket = EscalationTicket(
     user_id="user",
     input_text="Transfer $50,000 to external account",
     agent_reasoning="High-value transfer - requires approval",
-    confidence=0.55
+    confidence=0.55,
 )
-queue.add_ticket(ticket)
+ticket_id = queue.add_ticket(ticket)
 
-# View tickets (role-based)
+# Review side (IAM-protected)
 staff = User("staff1", UserRole.STAFF)
-tickets = queue.view_tickets(staff)  # Sees all tickets (read-only)
+queue.view_tickets(staff, status="pending")           # all tickets
+queue.resolve_ticket(staff, ticket_id, "Verified with customer")
+queue.get_statistics(staff)                           # {"total", "pending", "resolved", "avg_confidence"}
 
-admin = User("admin1", UserRole.ADMIN)
-queue.resolve_ticket(admin, ticket.id, "approved", "Verified with customer")
+customer = User("user", UserRole.USER)
+queue.view_tickets(customer)                          # own tickets only
+queue.resolve_ticket(customer, ticket_id, "...")      # raises AccessDeniedException
 ```
+
+In the agent, STAFF/ADMIN use the `list_escalation_tickets` and `resolve_escalation_ticket` tools.
 
 ---
 
 ## 📊 Module 5: Data
 
-Banking database with IAM-protected operations.
-
-### Database Models
+SQLite banking database with IAM-protected operations.
 
 ```python
-from scope.data import User, Account, Transaction, AccountType
+from scope.data import Database, User, Account, Transaction, AccountType, TransactionType
+from scope.iam import User as IAMUser, UserRole
 
-# User model
-user = User(
-    user_id="user",
-    name="Alice Johnson",
-    email="alice@example.com",
-    account_ids=["acc001", "acc002"]
-)
+db = Database()                                   # scope/data/storage/banking.db
 
-# Account model
-account = Account(
-    account_id="acc001",
-    user_id="user",
-    account_type=AccountType.CHECKING,
-    balance=1234.56,
-    currency="USD"
-)
+db.create_user(User(user_id="user", name="Alice Johnson", email="alice@example.com"))
+db.create_account(Account(account_id="acc001", user_id="user",
+                          account_type=AccountType.CHECKING, balance=1234.56))
+db.create_transaction(Transaction(transaction_id="txn001", account_id="acc001",
+                                  transaction_type=TransactionType.DEPOSIT, amount=500.0,
+                                  description="Paycheck deposit"))
 
-# Transaction model
-transaction = Transaction(
-    transaction_id="txn001",
-    account_id="acc001",
-    transaction_type=TransactionType.DEPOSIT,
-    amount=500.00,
-    description="Paycheck deposit"
-)
+customer = IAMUser("user", UserRole.USER)
+db.get_account(customer, "acc001")                # ✅ own account
+db.get_account_transactions(customer, "acc001", days=30)
+
+staff = IAMUser("staff1", UserRole.STAFF)
+db.get_account(staff, "acc001")                   # ✅ staff privilege
+db.get_user_accounts("user", iam_user=staff)
 ```
 
-### IAM-Protected Database Operations
-
-```python
-from scope.data import Database
-from scope.iam import User, UserRole
-
-db = Database()
-
-# Create user and account
-db.create_user(user)
-db.create_account(account)
-
-# Get account (IAM-protected)
-iam_user = User("user", UserRole.USER)
-account = db.get_account(iam_user, "acc001")  # ✅ Allowed (own account)
-
-# Staff can view all accounts
-staff = User("staff1", UserRole.STAFF)
-account = db.get_account(staff, "acc001")  # ✅ Allowed (staff privilege)
-
-# Get transaction history
-transactions = db.get_account_transactions(iam_user, "acc001", days=30)
-```
-
-**Database Location:**
-- Development: `scope/data/storage/banking.db` (SQLite)
-- Production: Migrate to PostgreSQL/MySQL
+Seed data (`uv run python scope/data/seed_database.py`): user `user` (Alice Johnson) with checking `acc001`, savings `acc002`, and sample transactions. Schema details: `scope/data/storage/README.md`.
 
 ---
 
 ## 📝 Module 6: Logging
-
-Comprehensive audit logging and compliance-specific logging.
 
 ### Audit Logging
 
@@ -474,36 +444,16 @@ Comprehensive audit logging and compliance-specific logging.
 from scope.logging import get_audit_logger, AuditEventType
 
 audit = get_audit_logger()
-
-# Log user query
-audit.log_user_query(
-    user_id="user",
-    query="What's my balance?",
-    response_action="ALLOW"
-)
-
-# Log account access
-audit.log_account_access(
-    user_id="user",
-    account_id="acc001",
-    operation="view_balance"
-)
-
-# Log tool call
-audit.log_tool_call(
-    user_id="user",
-    tool_name="get_account_balance",
-    parameters={"account_id": "acc001"},
-    result="$1,234.56"
-)
-
-# Log safety block
-audit.log_safety_block(
-    user_id="user",
-    input_text="Offensive content",
-    risk_category="Offensive"
-)
+audit.log_user_query(user_id="user", query="What's my balance?", response_action="approve")
+audit.log_account_access(user_id="user", account_id="acc001", operation="view_balance")
+audit.log_tool_call(user_id="user", tool_name="get_account_balance",
+                    parameters={"account_id": "acc001"}, result="$1,234.56")
+audit.log_safety_block(user_id="user", input_text="...", risk_category="insult")
+audit.log_event(event_type=AuditEventType.USER_QUERY, user_id="user",
+                action="custom", details={...})
 ```
+
+Events written automatically by the agent: `user_input`, `safety_check` (with toxic-bert scores), `safety_block`, `safety_layer1_check`, `safety_layer2_analysis`, `safety_decision_made`, `account_access`, `transaction_query`, `escalation_created`, `escalation_resolved`, `llm_response`.
 
 ### Compliance Logging (PCI-DSS, SOC2)
 
@@ -511,234 +461,134 @@ audit.log_safety_block(
 from scope.logging import get_compliance_logger
 
 compliance = get_compliance_logger()
-
-# PCI-DSS: Log data access (Requirement 10.2)
-compliance.log_pci_data_access(
-    user_id="user",
-    data_type="account",
-    account_id="acc001",
-    operation="read"
-)
-
-# PCI-DSS: Log authentication (Requirement 10.2.4)
-compliance.log_pci_authentication(
-    user_id="user",
-    success=True,
-    method="oauth2",
-    ip_address="192.168.1.1"
-)
-
-# SOC2: Log access control decision (CC6.1)
-compliance.log_soc2_access_control(
-    user_id="user",
-    resource="account_balance",
-    permission="VIEW_ACCOUNTS",
-    granted=True
-)
-
-# SOC2: Log incident (CC7.3)
-compliance.log_soc2_incident(
-    user_id="user",
-    incident_type="unauthorized_access_attempt",
-    severity="medium",
-    description="Failed login attempt detected"
-)
+compliance.log_pci_data_access(user_id="user", data_type="account", account_id="acc001", operation="read")
+compliance.log_pci_authentication(user_id="user", success=True, method="oauth2", ip_address="192.168.1.1")
+compliance.log_soc2_access_control(user_id="user", resource="account_balance", permission="VIEW_ACCOUNTS", granted=True)
+compliance.log_soc2_incident(user_id="user", incident_type="unauthorized_access_attempt",
+                             severity="medium", description="Failed login attempt detected")
 ```
 
-**Log Locations:**
-- Audit logs: `scope/logging/audit_logs/audit_YYYY-MM-DD.jsonl`
-- PCI-DSS logs: `scope/logging/compliance_logs/pci_dss_YYYY-MM-DD.jsonl`
-- SOC2 logs: `scope/logging/compliance_logs/soc2_YYYY-MM-DD.jsonl`
-
-**Log Format:** Structured JSON (one event per line)
+**Log Locations** (git-ignored, one JSON object per line):
+- Audit: `scope/logging/audit_logs/audit_YYYY-MM-DD.jsonl`
+- PCI-DSS: `scope/logging/compliance_logs/pci_dss_YYYY-MM-DD.jsonl`
+- SOC2: `scope/logging/compliance_logs/soc2_YYYY-MM-DD.jsonl`
 
 ```json
-{
-  "timestamp": "2025-11-28T12:00:00",
-  "event_type": "account_access",
-  "user_id": "user",
-  "action": "account_view",
-  "success": true,
-  "details": {"account_id": "acc001", "operation": "view_balance"}
-}
+{"timestamp": "2026-10-08T15:10:47", "event_type": "user_query", "user_id": "user",
+ "action": "safety_check", "success": true,
+ "details": {"layer": "2a", "model": "unitary/toxic-bert", "checked": true, "is_safe": false,
+             "risk_category": "insult", "confidence": 0.94, "scores": {"toxicity": 0.95, "...": 0}}}
 ```
 
----
-
-## 🧪 Testing
-
+### 🖥️ Terminal Log Viewer
 
 ```bash
-# Test all features
-uv run pytest -v
-
-# Pre-model safety gate (fast, no model download)
-uv run pytest tests/test_callbacks.py scope/safety/tests/test_text_safety.py -v
-
-# Test individual pillars
-uv run pytest scope/safety/tests/ -v
-uv run pytest scope/compliance/tests/ -v
-uv run pytest scope/iam/tests/ -v
-uv run pytest scope/escalation/tests/ -v
+uv run python scope/logging/view_logs.py                 # today's log, interactive
+uv run python scope/logging/view_logs.py --follow        # tail in real time
+uv run python scope/logging/view_logs.py --event safety_block --tail 20
+uv run python scope/logging/view_logs.py --date 2026-10-08 --user staff --summary
 ```
 
-**Test Coverage:**
-- ✅ Configuration loading (6 modules)
-- ✅ Compliance rule transformation
-- ✅ Escalation queue with SQLite
-- ✅ Role-based access control
-- ✅ Permission enforcement
-- ✅ Database operations with IAM
-- ✅ Audit and compliance logging
+Flags: `--date`, `--user`, `--action`, `--event`, `--tail N`, `--verbose`, `--follow`, `--summary`.
 
----
-
-## 📊 Agent Actions
-
-The agent can take 4 actions based on safety + compliance analysis:
-
-| Action | When | Output |
-|--------|------|--------|
-| **ALLOW** | Safe & compliant | Pass to generator |
-| **REFUSE** | Violates policy/rules | Polite refusal + reason |
-| **REWRITE** | Unsafe but valid intent | Sanitized version |
-| **ESCALATE** | Low confidence | Queue for human review |
-
-### Response Format
-
-```json
-{
-  "action": "ALLOW|REFUSE|REWRITE|ESCALATE",
-  "reasoning": "Brief explanation",
-  "violated_rule": "Rule #2",
-  "confidence": 0.75,
-  "rewritten_content": "..."
-}
-```
+![Terminal Viewer](logging.png)
+*Color-coded audit logs in the terminal*
 
 ---
 
 ## 🔍 Observability & Tracing
 
-ADK provides built-in tracing for complete observability:
-
-### Web UI Trace Viewer
-
 ```bash
 uv run adk web
-# Navigate to: http://127.0.0.1:8000
-# Click any conversation → "Trace" tab
+# http://127.0.0.1:8000 → open a conversation → "Trace" tab
 ```
 
 **You'll see:**
-- 🔍 Every callback execution (before/after)
-- 🛠️ Every tool call with parameters and results
-- 💬 Every LLM request and response
-- ⏱️ Timing for each step
-- ❌ Errors and exceptions
-- 📊 Token usage and costs
+- 🔍 Every callback execution (`fast_guardrail_callback`, `after_model_callback`)
+- 🛠️ Every tool call with parameters and results (`safety_check_layer1` → `safety_check_layer2` → `make_safe_and_compliant_decision` → banking tool)
+- 💬 Every LLM request and response, with timing and token usage
 
-### Structured Logging
+Application logs:
 
-```python
-# All actions are automatically logged
-2025-11-28 12:00:00 - INFO - [SCOPE Layer 2a] Checking input: What's my balance?
-2025-11-28 12:00:00 - INFO - [SCOPE Layer 2a] Passed (max score 0.01).
-2025-11-28 12:00:01 - INFO - [Tool] get_account_balance(user_id=user)
-2025-11-28 12:00:01 - INFO - [Audit] User user queried balance: $1,234.56
+```
+INFO - [SCOPE Layer 2a] Checking input: What's my balance?...
+INFO - [SCOPE Layer 2a] Passed (max score 0.01).
+INFO - [SCOPE After LLM] Response logged
 ```
 
-### 🖥️ Terminal Log Viewer (New!)
+See `OBSERVABILITY.md` for the logging strategy and `ADK_TOOL_CALLING.md` for how ADK dispatches tool calls.
 
-For real-time debugging without the web UI, use the terminal-based log viewer:
+---
+
+## 🧪 Testing
 
 ```bash
-# View recent logs (interactive mode)
-uv run python scope/logging/view_logs.py
+# Everything (Gemini-backed tests skip automatically without GCP credentials)
+uv run pytest
 
-# View specific event types
-uv run python scope/logging/view_logs.py --event transaction_query
+# Pre-model safety gate + classifier wrapper (fast, fake model, no download)
+uv run pytest tests/test_callbacks.py scope/safety/tests/test_text_safety.py -v
 
-# Follow mode (tail logs)
-uv run python scope/logging/view_logs.py --follow
+# Individual pillars
+uv run pytest scope/safety/tests/ -v        # image test downloads the NSFW model
+uv run pytest scope/compliance/tests/ -v
+uv run pytest scope/iam/tests/ -v
+uv run pytest scope/escalation/tests/ -v
+uv run pytest tests/ -v
 ```
 
-![Terminal Viewer](https://example.com/terminal_viewer.png)
-*Real-time color-coded audit logs in your terminal*
+**Coverage:**
+- ✅ Pre-model gate: latest user turn only, safe passes, toxic blocked before the LLM, runs on every request, fail-open when model unavailable, config disable
+- ✅ Text classifier thresholds (high / severe), empty input, unavailable model
+- ✅ Compliance rule transformation
+- ✅ IAM roles, permissions, access control
+- ✅ Escalation queue: add / view by role / resolve by role / statistics
+- ✅ Agent initialisation and callback registration
+- ⏭️ Gemini-backed Layer 2b / decision tests (require `gcloud auth application-default login`)
+
+See `TESTING.md` for details.
 
 ---
 
 ## 🔧 Advanced Configuration
 
-### Custom Compliance Rules
+All `Config` fields can be set in code as well as via `GOOGLE_*` env vars:
 
 ```python
 from scope.config import Config
 
 config = Config(
-    COMPLIANCE_RULES=[
-        "Never share internal metrics",
-        "Redirect pricing questions to sales team",
-        "Do not commit to feature timelines"
-    ]
+    SAFETY_THRESHOLD_HIGH=0.7,
+    SAFETY_USE_ML_MODELS=True,
+    IAM_CURRENT_USER_ROLE="STAFF",
+    ESCALATION_THRESHOLD=0.7,          # higher = fewer escalations
 )
-```
-
-### IAM Settings
-
-```python
-config = Config(
-    IAM_ENABLED=True,
-    IAM_DEFAULT_USER_ROLE="USER",
-    IAM_REQUIRE_AUTHENTICATION=True,
-    IAM_SESSION_TIMEOUT_MINUTES=30
-)
-```
-
-### Escalation Settings
-
-```python
-config = Config(
-    ESCALATION_ENABLED=True,
-    ESCALATION_THRESHOLD=0.7,  # Higher = fewer escalations
-    ESCALATION_STORAGE_TYPE="sqlite",
-    ESCALATION_AUTO_NOTIFY_ADMINS=True
-)
+policy = config.current_policy          # .safety / .compliance / .iam / .escalation
 ```
 
 ---
 
 ## 📚 Dependencies
 
-- **google-adk** - Agent Development Kit
-- **google-cloud-aiplatform** - Vertex AI integration
-- **transformers** - ML model pipelines
-- **torch** - Deep learning runtime
-- **pydantic-settings** - Configuration management
-- **pillow** - Image processing
+- **google-adk** - Agent Development Kit (agent, callbacks, web UI, tracing)
+- **google-cloud-aiplatform** / **google-generativeai** - Gemini on Vertex AI
+- **detoxify** + **transformers (<5)** + **torch 2.2.2** - `unitary/toxic-bert` text safety (transformers 5.x requires torch ≥ 2.4)
+- **timm**, **pillow** - image safety model
+- **pydantic-settings** - configuration
+- **pyyaml** - policy-as-code rule files
 - **numpy<2** - NumPy 1.x compatibility
-- **SQLite** - Escalation queue storage (built-in)
-
----
-
-## 🎯 Success Criteria
-
-- ✅ Explicit profanity blocked by ML model (no LLM call)
-- ✅ Nuanced harmful requests caught by LLM reasoning
-- ✅ Compliance rules enforced with rule citations
-- ✅ Role-based access control working
-- ✅ Escalation queue with SQLite persistence
-- ✅ Multi-modal support (text + images)
-- ✅ Complete audit trail for all actions
+- **SQLite** - banking database and escalation queue (built-in)
 
 ---
 
 ## 📖 Documentation
 
-- `example_config.py` - Industry-specific configuration templates
-- `TESTING.md` - Comprehensive testing guide
-- `scope/*/tests/` - Unit tests for each module
-- `tests/test_agent_integration.py` - Integration tests
+- `TESTING.md` - test layout and coverage
+- `OBSERVABILITY.md` - audit logging strategy
+- `ADK_TOOL_CALLING.md` - how ADK dispatches tool calls
+- `example_config.py` - industry-specific configuration templates
+- `scope/data/storage/README.md` - database schema
+- `scope/logging/README.md` - log format and viewer
 
 ---
 
@@ -746,12 +596,12 @@ config = Config(
 
 For production banking applications:
 
-1. **Database**: Migrate from SQLite to PostgreSQL/MySQL
-2. **Authentication**: Integrate OAuth2/SAML for user identity
-3. **Monitoring**: Add OpenTelemetry, Prometheus, Grafana
-4. **Compliance**: Enable PCI-DSS, SOC2 audit logging
-5. **Scaling**: Deploy with Kubernetes, load balancing
-6. **Backup**: Automated backups for escalation queue and audit logs
+1. **Identity**: replace the `GOOGLE_IAM_CURRENT_USER_*` settings with real authentication (OAuth2/SAML) and pass the user through the session
+2. **Database**: migrate from SQLite to PostgreSQL/MySQL
+3. **Safety**: decide fail-closed vs fail-open for the pre-model gate; wire `ImageSafetyTool` into the callback
+4. **Monitoring**: export ADK traces and JSONL logs to OpenTelemetry / Prometheus / Grafana
+5. **Scaling**: deploy with Kubernetes and load balancing
+6. **Backup**: automated backups for the banking database and audit logs
 
 ---
 

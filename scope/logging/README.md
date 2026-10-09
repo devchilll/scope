@@ -1,6 +1,6 @@
 # Audit Logging System
 
-This directory contains the audit logging system for PRIME, which tracks all user actions, safety decisions, and system events for compliance and security monitoring.
+This directory contains the audit logging system for SCOPE, which tracks all user actions, safety decisions, and system events for compliance and security monitoring.
 
 ## Components
 
@@ -50,7 +50,7 @@ Logs are stored in JSONL (JSON Lines) format, with one JSON object per line:
 The log viewer is a standalone Python script with no additional dependencies beyond the standard library.
 
 ```bash
-cd prime_guardrails/logging
+cd scope/logging
 python view_logs.py --help
 ```
 

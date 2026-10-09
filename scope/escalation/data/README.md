@@ -1,42 +1,36 @@
 # Escalation Queue Data
 
-This directory stores SQLite databases for the escalation queue.
+Escalation tickets are stored in the `escalations` table of the main banking
+database (`scope/data/storage/banking.db`), not in a separate file. This
+directory is kept only for test databases (`*.db`, ignored by git).
 
-## Files
-
-- `escalations.db` - Production escalation queue database
-- `*.db` - Test databases (ignored by git)
-
-## Database Schema
+## Schema
 
 ```sql
 CREATE TABLE escalations (
     id TEXT PRIMARY KEY,
-    timestamp TEXT NOT NULL,
     user_id TEXT NOT NULL,
     input_text TEXT NOT NULL,
     agent_reasoning TEXT NOT NULL,
     confidence REAL NOT NULL,
+    created_at TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
+    resolved_at TEXT,
     resolved_by TEXT,
-    resolution_note TEXT,
-    resolution_timestamp TEXT
+    resolution TEXT,
+    metadata TEXT
 );
-
-CREATE INDEX idx_user_id ON escalations(user_id);
-CREATE INDEX idx_status ON escalations(status);
 ```
 
 ## Access
 
-Use the `EscalationQueue` class to interact with the database:
-
 ```python
-from prime_guardrails.escalation import EscalationQueue
+from scope.escalation import EscalationQueue
+from scope.data import Database
 
-# Default location: prime_guardrails/escalation/data/escalations.db
-queue = EscalationQueue()
-
-# Custom location
-queue = EscalationQueue("custom_path.db")
+queue = EscalationQueue()                      # shares the banking database
+queue = EscalationQueue(Database("custom.db")) # custom location (tests)
 ```
+
+All queue operations are IAM-protected: USER sees own tickets, STAFF/ADMIN see
+and resolve all tickets.
