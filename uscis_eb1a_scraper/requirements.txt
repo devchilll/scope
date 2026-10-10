@@ -1,6 +1,0 @@
-# Runtime dependency. The scraper deliberately uses only the standard library
-# for HTML parsing, so requests is the single hard requirement.
-requests>=2.28
-
-# Optional: enables PDF text extraction (not required for discovery/download).
-# pypdf>=4.0

@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use SCOPE, please cite it as below."
+type: software
+title: "SCOPE: AI Agent Governance Framework For High-Stakes Applications"
+abstract: >-
+  Reference governance framework for enterprise AI agents built on Google's
+  Agent Development Kit, with five pillars: Safety, Compliance,
+  Observability, Permissions, and Escalation.
+authors:
+  - given-names: Ivy
+    family-names: Si
+repository-code: "https://github.com/devchilll/scope"
+version: 0.1.0
+keywords:
+  - ai-agents
+  - guardrails
+  - agent-safety
+  - llm-observability

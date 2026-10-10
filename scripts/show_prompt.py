@@ -1,4 +1,8 @@
-"""Quick test of the new banking agent prompt."""
+"""Print the start of the banking agent prompt."""
+
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scope.prompt import ROUTER_INSTRUCTIONS
 

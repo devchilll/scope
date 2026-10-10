@@ -2,7 +2,7 @@
 name = "scope"
 version = "0.1.0"
 description = "SCOPE: Enterprise Agent Governance Framework - Safety, Compliance, Observability, Permissions, Escalation"
-authors = [{ name = "Ivy", email = "" }]
+authors = [{ name = "Ivy Si" }]
 license = "Apache-2.0"
 readme = "README.md"
 dependencies = [

@@ -1,5 +1,7 @@
 # SCOPE: AI Agent Governance Framework For High-Stakes Applications
 
+SCOPE, by Ivy Si
+
 **SCOPE** (Safety, Compliance, Observability, Permissions, Escalation) is a reference governance framework for enterprise AI agents. Built on Google's Agent Development Kit (ADK), it implements a "Defense in Depth" architecture with **5 pillars**:
 
 - **S**afety Guardrails: ML pre-model gate + LLM contextual safety
@@ -150,7 +152,7 @@ scope/
 
 tests/                     # Callback + integration tests
 scope/*/tests/             # Per-pillar unit tests
-uscis_eb1a_scraper/        # Separate utility (USCIS AAO decision scraper); not part of SCOPE
+scripts/                   # Ad-hoc dev checks (users, escalation timestamps, prompt, observability tools)
 ```
 
 ---
