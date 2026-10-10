@@ -1,6 +1,0 @@
-# The repo-wide .gitignore excludes *.txt*; keep our requirements file tracked.
-!requirements.txt
-
-# Never commit downloaded decision PDFs or scraper output.
-decisions/
-*.pdf

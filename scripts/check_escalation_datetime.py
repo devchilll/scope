@@ -1,6 +1,6 @@
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scope.escalation import EscalationQueue, EscalationTicket
 from scope.iam import User as IAMUser, UserRole

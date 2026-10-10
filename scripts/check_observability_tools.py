@@ -4,7 +4,7 @@ from pathlib import Path
 import json
 
 # Add project root to path
-project_root = Path(__file__).parent
+project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from scope.observability_tools import (
@@ -14,7 +14,7 @@ from scope.observability_tools import (
     create_escalation_ticket
 )
 
-def test_tools():
+def check_tools():
     print("🧪 Testing Observability Tools...")
     
     # 1. Test Safety Check Layer 2
@@ -44,4 +44,4 @@ def test_tools():
         print(f"❌ list_escalation_tickets failed: {e}")
 
 if __name__ == "__main__":
-    test_tools()
+    check_tools()
