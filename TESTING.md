@@ -59,6 +59,7 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 ### Pillar 1: Safety
 - ✅ ImageSafetyTool initialization
 - ✅ Output format validation
+- ✅ A failed image check returns an unknown result (`checked: false`), never "safe"
 - ✅ TextSafetyTool: safe / toxic / severe-toxicity / threshold / empty input / model unavailable
   (`scope/safety/tests/test_text_safety.py`, fake model - no download)
 
@@ -66,9 +67,11 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 - ✅ Only the latest user turn is screened (model turns ignored)
 - ✅ Safe input continues to the LLM
 - ✅ Toxic input returns a refusal `LlmResponse` before the model is called
-- ✅ Check runs on every request
+- ✅ Screened and logged once per turn; the decision applies to every model call of that turn (tool loop)
+- ✅ Blocked text is withheld from later model requests (unit + end-to-end through ADK's runner with a fake LLM)
+- ✅ `scope.pre_model_safety_gate` span with blocked / max-score attributes
 - ✅ Model unavailable → logged, fails open to Layer 2b
-- ✅ `GOOGLE_SAFETY_USE_ML_MODELS=false` → classifier skipped (logged)
+- ✅ `GOOGLE_SAFETY_USE_ML_MODELS=false` → classifier skipped (logged), in the callback and the `safety_check_layer1` tool
 
 ### Pillar 2: Compliance (5 tests)
 - ✅ Single rule transformation

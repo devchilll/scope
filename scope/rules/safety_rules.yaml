@@ -59,6 +59,6 @@ safety_rules:
 
 # Configuration for safety thresholds
 thresholds:
-  ml_safety_score: 0.8  # Threshold for ML model (Layer 1)
-  llm_safety_score: 0.7  # Threshold for LLM check (Layer 2)
+  ml_safety_score: 0.8  # Threshold for ML model (Layer 2a)
+  llm_safety_score: 0.7  # Threshold for LLM check (Layer 2b)
   confidence_threshold: 0.6  # Minimum confidence for auto-decisions

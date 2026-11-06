@@ -3,7 +3,8 @@
 - ``TextSafetyTool`` / ``get_text_tool``: unitary/toxic-bert text classifier.
   Used by the ``before_model_callback`` to screen every user turn *before*
   the LLM runs, and by the ``safety_check_layer1`` tool for trace visibility.
-- ``ImageSafetyTool``: NSFW image classifier.
+- ``ImageSafetyTool``: NSFW image classifier. Available for direct use; not wired
+  into the pre-model gate, so images are not screened.
 """
 
 from .tools import ImageSafetyTool

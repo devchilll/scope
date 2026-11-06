@@ -1,49 +1,58 @@
 """ADK model callbacks: pre-model safety gate and post-model audit logging.
 
 ``fast_guardrail_callback`` is registered as the agent's ``before_model_callback``
-and runs on *every* LLM request, before the model acts. It:
+and runs before *every* LLM request. It:
 
 1. Extracts the latest user turn from the request.
-2. Logs the input to the audit trail.
-3. Runs the Layer 2a ML text-safety check (``unitary/toxic-bert``).
-4. Blocks the request - returning a refusal ``LlmResponse`` so the model is
-   never called - when the classifier flags it, and logs the block.
-5. Otherwise logs the pass and lets the request continue to the LLM, where
-   Layer 2b (LLM contextual safety + compliance) runs via the explicit tools.
+2. Screens it once per invocation (one user turn): logs the input to the audit
+   trail and runs the Layer 2a ML text-safety check (``unitary/toxic-bert``)
+   inside a ``scope.pre_model_safety_gate`` OpenTelemetry span. The decision
+   is cached in session state, so the later model calls of the same turn
+   (ADK's tool loop) reuse it instead of re-screening and re-logging.
+3. Blocks the request - returning a refusal ``LlmResponse`` so the model is
+   never called - when the classifier flags it, logs the block, and records
+   the blocked text (as a SHA-256 hash) in session state.
+4. Otherwise lets the request continue to the LLM, where Layer 2b (LLM
+   contextual safety + compliance) runs via the explicit tools. Before it
+   does, any earlier user turns that were blocked are replaced in the request
+   with a placeholder, so blocked text never reaches the model as history.
 
 ``after_model_callback`` logs that a model response was produced.
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
-from typing import Optional
+from typing import Any, Iterable, Optional
 
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.models import LlmRequest, LlmResponse
 from google.genai import types as genai_types
+from opentelemetry import trace
 
 from .config import Config
 from .logging import get_audit_logger, AuditEventType
-from .safety import ImageSafetyTool, get_text_tool
+from .safety import get_text_tool
 
 logger = logging.getLogger(__name__)
-
-# Lazy loading globals
-_IMAGE_TOOL = None
+tracer = trace.get_tracer(__name__)
 
 BLOCKED_MESSAGE = (
     "I'm sorry, but I can't help with that request. "
     "If you believe this was flagged in error, please contact our support team."
 )
 
+# Text that replaces a previously blocked user turn in later model requests.
+WITHHELD_MESSAGE = "[message withheld by SCOPE safety gate]"
 
-def get_image_tool():
-    global _IMAGE_TOOL
-    if _IMAGE_TOOL is None:
-        logger.info("Initializing ImageSafetyTool (Lazy Load)...")
-        _IMAGE_TOOL = ImageSafetyTool()
-    return _IMAGE_TOOL
+# Session-state keys (prefixed so they don't collide with application state).
+# SHA-256 hashes of the user texts the gate has blocked in this session:
+BLOCKED_INPUTS_STATE_KEY = "scope_safety_blocked_inputs"
+# The gate decision for the current invocation (one user turn):
+GATE_DECISION_STATE_KEY = "scope_safety_gate_decision"
+
+GATE_SPAN_NAME = "scope.pre_model_safety_gate"
 
 
 def _current_user_id() -> str:
@@ -53,21 +62,58 @@ def _current_user_id() -> str:
         return "user"
 
 
+def _content_text(content: Any) -> str:
+    parts = getattr(content, "parts", None) or []
+    return "".join(p.text for p in parts if getattr(p, "text", None))
+
+
+def _text_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 def extract_latest_user_text(llm_request: LlmRequest) -> str:
     """Return the text of the most recent ``user`` turn in the request.
 
     Only the latest user turn is screened: earlier turns were already checked
-    when they arrived, and model turns are not user input.
+    when they arrived, and model turns are not user input. Tool results are
+    ``user``-role contents without text, so they are skipped.
     """
     contents = getattr(llm_request, "contents", None) or []
     for content in reversed(contents):
         if getattr(content, "role", None) != "user":
             continue
-        parts = getattr(content, "parts", None) or []
-        text = "".join(p.text for p in parts if getattr(p, "text", None))
+        text = _content_text(content)
         if text.strip():
             return text
     return ""
+
+
+def redact_blocked_inputs(
+    llm_request: LlmRequest, blocked_hashes: Iterable[str]
+) -> int:
+    """Replace previously blocked user turns in ``llm_request`` with a placeholder.
+
+    A blocked message stays in the ADK session (it is part of the conversation
+    record), so ADK would otherwise send it to the model as history on later
+    turns. Each matching ``user`` content is swapped for a new content holding
+    only ``WITHHELD_MESSAGE``; the turn itself is kept so the user/model
+    ordering of the request stays valid. Returns the number of turns replaced.
+    """
+    blocked = set(blocked_hashes or ())
+    contents = getattr(llm_request, "contents", None)
+    if not blocked or not contents:
+        return 0
+    redacted = 0
+    for i, content in enumerate(contents):
+        if getattr(content, "role", None) != "user":
+            continue
+        text = _content_text(content)
+        if text.strip() and _text_hash(text) in blocked:
+            contents[i] = genai_types.Content(
+                role="user", parts=[genai_types.Part(text=WITHHELD_MESSAGE)]
+            )
+            redacted += 1
+    return redacted
 
 
 def _blocked_response(message: str = BLOCKED_MESSAGE) -> LlmResponse:
@@ -80,96 +126,157 @@ def _blocked_response(message: str = BLOCKED_MESSAGE) -> LlmResponse:
     )
 
 
+def _screen(user_text: str, user_id: str) -> dict:
+    """Log and classify ``user_text``; return ``{"blocked": bool, "checked": bool}``.
+
+    Runs inside a ``scope.pre_model_safety_gate`` span so the check shows up
+    in ADK's OpenTelemetry traces.
+    """
+    audit = get_audit_logger()
+
+    with tracer.start_as_current_span(GATE_SPAN_NAME) as span:
+        logger.info("[SCOPE Layer 2a] Checking input: %s...", user_text[:50])
+
+        # 1. Log user input
+        audit.log_event(
+            event_type=AuditEventType.USER_QUERY,
+            user_id=user_id,
+            action="user_input",
+            details={"input": user_text[:500]},  # Truncate for privacy
+        )
+
+        # 2. Run the ML safety check (unless explicitly disabled by config)
+        policy = Config().current_policy.safety
+        if not policy.use_ml_models:
+            audit.log_event(
+                event_type=AuditEventType.USER_QUERY,
+                user_id=user_id,
+                action="safety_check",
+                details={
+                    "layer": "2a",
+                    "checked": False,
+                    "note": "ML pre-model check disabled by SAFETY_USE_ML_MODELS=false; "
+                            "relying on Layer 2b (LLM) safety tools",
+                },
+            )
+            span.set_attribute("scope.safety.checked", False)
+            span.set_attribute("scope.safety.blocked", False)
+            span.set_attribute("scope.safety.outcome", "skipped")
+            logger.info("[SCOPE Layer 2a] Skipped (SAFETY_USE_ML_MODELS=false).")
+            return {"blocked": False, "checked": False}
+
+        text_tool = get_text_tool()
+        result = text_tool.check(user_text)
+        max_score = max(result["scores"].values()) if result["scores"] else 0.0
+
+        span.set_attribute("scope.safety.model", result["model"])
+        span.set_attribute("scope.safety.checked", result["checked"])
+        span.set_attribute("scope.safety.max_score", float(max_score))
+        span.set_attribute("scope.safety.risk_category", result["risk_category"])
+
+        # 3. Log the check result
+        audit.log_event(
+            event_type=AuditEventType.USER_QUERY,
+            user_id=user_id,
+            action="safety_check",
+            success=result["checked"],
+            error=result.get("error"),
+            details={
+                "layer": "2a",
+                "model": result["model"],
+                "checked": result["checked"],
+                "is_safe": result["is_safe"],
+                "risk_category": result["risk_category"],
+                "confidence": result["confidence"],
+                "scores": result["scores"],
+                "threshold_high": text_tool.threshold_high,
+            },
+        )
+
+        if not result["checked"]:
+            # Classifier unavailable: fail open to Layer 2b, but make it visible.
+            span.set_attribute("scope.safety.blocked", False)
+            span.set_attribute("scope.safety.outcome", "unchecked")
+            logger.error(
+                "[SCOPE Layer 2a] Safety model unavailable (%s); "
+                "continuing to Layer 2b LLM checks.",
+                result.get("error"),
+            )
+            return {"blocked": False, "checked": False}
+
+        # 4. Block if unsafe
+        if not result["is_safe"]:
+            span.set_attribute("scope.safety.blocked", True)
+            span.set_attribute("scope.safety.outcome", "blocked")
+            logger.warning(
+                "[SCOPE Layer 2a] BLOCKED: %s (%.2f)",
+                result["risk_category"], result["confidence"],
+            )
+            audit.log_safety_block(
+                user_id=user_id,
+                input_text=user_text[:100],
+                risk_category=result["risk_category"],
+            )
+            return {"blocked": True, "checked": True}
+
+        # 5. Pass
+        span.set_attribute("scope.safety.blocked", False)
+        span.set_attribute("scope.safety.outcome", "allowed")
+        logger.info(
+            "[SCOPE Layer 2a] Passed (max score %.2f).", result["confidence"]
+        )
+        return {"blocked": False, "checked": True}
+
+
 def fast_guardrail_callback(
     callback_context: CallbackContext, llm_request: LlmRequest
 ) -> Optional[LlmResponse]:
     """Layer 2a pre-model safety gate.
 
-    Runs before the LLM processes the request. Returns an ``LlmResponse`` to
-    block the request (the model is never called), or ``None`` to continue.
+    Runs before every LLM request. Returns an ``LlmResponse`` to block the
+    request (the model is never called), or ``None`` to continue.
+
+    The latest user turn is screened (and logged) once per invocation; the
+    decision is cached in session state and applied to every model call of
+    that invocation. Previously blocked user turns are redacted from the
+    request before it reaches the model.
     """
-    audit = get_audit_logger()
-    user_id = _current_user_id()
+    state = getattr(callback_context, "state", None)
+    invocation_id = getattr(callback_context, "invocation_id", None)
     user_text = extract_latest_user_text(llm_request)
 
-    if not user_text:
-        return None
+    decision = None
+    if user_text:
+        text_hash = _text_hash(user_text)
+        cached = state.get(GATE_DECISION_STATE_KEY) if state is not None else None
+        if (
+            invocation_id
+            and isinstance(cached, dict)
+            and cached.get("invocation_id") == invocation_id
+            and cached.get("input_sha256") == text_hash
+        ):
+            # Later model call in the same turn (tool loop): reuse the decision.
+            decision = cached
+        else:
+            decision = _screen(user_text, _current_user_id())
+            if state is not None:
+                state[GATE_DECISION_STATE_KEY] = {
+                    "invocation_id": invocation_id,
+                    "input_sha256": text_hash,
+                    **decision,
+                }
+                if decision["blocked"]:
+                    blocked = list(state.get(BLOCKED_INPUTS_STATE_KEY) or [])
+                    if text_hash not in blocked:
+                        # Assign a new list so ADK records the state change.
+                        state[BLOCKED_INPUTS_STATE_KEY] = blocked + [text_hash]
 
-    logger.info("[SCOPE Layer 2a] Checking input: %s...", user_text[:50])
-
-    # 1. Log user input
-    audit.log_event(
-        event_type=AuditEventType.USER_QUERY,
-        user_id=user_id,
-        action="user_input",
-        details={"input": user_text[:500]},  # Truncate for privacy
-    )
-
-    # 2. Run the ML safety check (unless explicitly disabled by config)
-    policy = Config().current_policy.safety
-    if not policy.use_ml_models:
-        audit.log_event(
-            event_type=AuditEventType.USER_QUERY,
-            user_id=user_id,
-            action="safety_check",
-            details={
-                "layer": "2a",
-                "checked": False,
-                "note": "ML pre-model check disabled by SAFETY_USE_ML_MODELS=false; "
-                        "relying on Layer 2b (LLM) safety tools",
-            },
-        )
-        logger.info("[SCOPE Layer 2a] Skipped (SAFETY_USE_ML_MODELS=false).")
-        return None
-
-    text_tool = get_text_tool()
-    result = text_tool.check(user_text)
-
-    # 3. Log the check result
-    audit.log_event(
-        event_type=AuditEventType.USER_QUERY,
-        user_id=user_id,
-        action="safety_check",
-        success=result["checked"],
-        error=result.get("error"),
-        details={
-            "layer": "2a",
-            "model": result["model"],
-            "checked": result["checked"],
-            "is_safe": result["is_safe"],
-            "risk_category": result["risk_category"],
-            "confidence": result["confidence"],
-            "scores": result["scores"],
-            "threshold_high": text_tool.threshold_high,
-        },
-    )
-
-    if not result["checked"]:
-        # Classifier unavailable: fail open to Layer 2b, but make it visible.
-        logger.error(
-            "[SCOPE Layer 2a] Safety model unavailable (%s); "
-            "continuing to Layer 2b LLM checks.",
-            result.get("error"),
-        )
-        return None
-
-    # 4. Block if unsafe
-    if not result["is_safe"]:
-        logger.warning(
-            "[SCOPE Layer 2a] BLOCKED: %s (%.2f)",
-            result["risk_category"], result["confidence"],
-        )
-        audit.log_safety_block(
-            user_id=user_id,
-            input_text=user_text[:100],
-            risk_category=result["risk_category"],
-        )
+    if decision and decision["blocked"]:
         return _blocked_response()
 
-    # 5. Pass
-    logger.info(
-        "[SCOPE Layer 2a] Passed (max score %.2f).", result["confidence"]
-    )
+    # Earlier blocked messages must not reach the model as conversation history.
+    if state is not None:
+        redact_blocked_inputs(llm_request, state.get(BLOCKED_INPUTS_STATE_KEY) or [])
     return None  # Continue to the LLM
 
 

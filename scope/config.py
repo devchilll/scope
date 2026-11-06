@@ -27,7 +27,7 @@ class BankInfo(BaseModel):
 class SafetyPolicy(BaseModel):
     """Safety thresholds and settings."""
     threshold_high: float = 0.8
-    use_ml_models: bool = True  # Use ML models vs LLM for Layer 2a
+    use_ml_models: bool = True  # Run the Layer 2a ML classifier (false = skip it; no LLM fallback)
 
 # ============================================================================
 # PILLAR 2: Compliance Configuration

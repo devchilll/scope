@@ -18,7 +18,7 @@ from scope.config import Config
 
 
 def _has_gcp_credentials() -> bool:
-    """Layer 2 / decision tools call Gemini on Vertex AI and need ADC."""
+    """Layer 2b / decision tools call Gemini on Vertex AI and need ADC."""
     import os
     if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
         return True
@@ -47,7 +47,7 @@ class TestRoleAwareSafetyChecks:
         config.IAM_CURRENT_USER_ID = "staff"
         
         try:
-            # Test Layer 2 safety check
+            # Test Layer 2b safety check
             result = safety_check_layer2("show me all escalation tickets")
             import json
             analysis = json.loads(result)

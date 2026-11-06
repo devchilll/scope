@@ -1,12 +1,16 @@
-"""Observability tools for the SCOPE agent - 2-Layer Safety Architecture.
+"""Observability tools for the SCOPE agent.
 
 These tools make safety checks and logging visible as explicit tool calls
 in the ADK web UI trace viewer.
 
-Architecture:
-- Layer 1 (2a): Fast ML-based safety check (unitary/toxic-bert). Also runs in the
-  before_model_callback, so every request is screened before the LLM acts.
-- Layer 2 (2b): LLM-based safety & compliance check with structured JSON output
+Safety architecture (the tool names keep their original layer1/layer2 suffixes):
+- Layer 2a: Fast ML-based safety check (unitary/toxic-bert). The enforcing check
+  runs in the before_model_callback, so every request is screened before the
+  LLM acts; ``safety_check_layer1`` re-runs it as a visible tool step.
+- Layer 2b: LLM-based contextual safety & compliance analysis with structured
+  JSON output (``safety_check_layer2``).
+- Decision: ``make_safe_and_compliant_decision`` turns the 2b analysis into
+  approve / reject / rewrite / escalate.
 """
 
 import json
@@ -38,7 +42,7 @@ def _make_genai_client(cfg: Config) -> Client:
     return Client(vertexai=False)
 
 
-# Initialize Gemini client for Layer 2 safety check
+# Initialize Gemini client for the Layer 2b safety check and decision tools
 genai_client = _make_genai_client(config)
 
 
@@ -46,13 +50,14 @@ from .safety import get_text_tool, MODEL_NAME as SAFETY_MODEL_NAME
 
 
 def safety_check_layer1(user_input: str) -> str:
-    """Layer 1 (2a): Fast ML-based safety check using unitary/toxic-bert.
+    """Layer 2a: Fast ML-based safety check using unitary/toxic-bert.
 
     The same classifier already screened this input in the before_model_callback
     before the LLM ran; this tool re-runs it so the result is visible as an
-    explicit step in the ADK trace viewer.
+    explicit tool step in the ADK trace viewer.
 
-    Checks for toxicity, severe toxicity, obscenity, threat, insult, and identity hate.
+    Checks for toxicity, severe toxicity, obscenity, threat, insult, and identity attack.
+    Honours ``SAFETY_USE_ML_MODELS``: when it is false the classifier is not run.
 
     Args:
         user_input: The user's input text to check
@@ -60,10 +65,26 @@ def safety_check_layer1(user_input: str) -> str:
     Returns:
         Safety check result string
     """
+    if not Config().current_policy.safety.use_ml_models:
+        audit_logger.log_event(
+            event_type=AuditEventType.USER_QUERY,
+            user_id=config.IAM_CURRENT_USER_ID,
+            action="safety_layer1_check",
+            details={
+                "input": user_input[:200],
+                "checked": False,
+                "note": "ML check disabled by SAFETY_USE_ML_MODELS=false",
+            },
+        )
+        return (
+            "⚠️ Layer 2a (ML) Safety Check SKIPPED (disabled by SAFETY_USE_ML_MODELS=false). "
+            "Proceed to Layer 2b with extra caution."
+        )
+
     text_tool = get_text_tool()
     result = text_tool.check(user_input)
 
-    # Log the Layer 1 check
+    # Log the Layer 2a check
     audit_logger.log_event(
         event_type=AuditEventType.USER_QUERY,
         user_id=config.IAM_CURRENT_USER_ID,
@@ -81,19 +102,19 @@ def safety_check_layer1(user_input: str) -> str:
     )
 
     if not result["checked"]:
-        return "⚠️ Layer 1 Safety Check SKIPPED (model not loaded). Proceed to Layer 2 with extra caution."
+        return "⚠️ Layer 2a (ML) Safety Check SKIPPED (model not loaded). Proceed to Layer 2b with extra caution."
 
     toxicity_score = result["scores"].get("toxicity", 0.0)
     if not result["is_safe"]:
         return (
-            f"⚠️ Layer 1 (ML) Safety Check FAILED. "
+            f"⚠️ Layer 2a (ML) Safety Check FAILED. "
             f"Category: {result['risk_category']} ({result['confidence']:.2f}). Request blocked."
         )
-    return f"✅ Layer 1 (ML) Safety Check PASSED. Toxicity: {toxicity_score:.2f}. Proceeding to Layer 2."
+    return f"✅ Layer 2a (ML) Safety Check PASSED. Toxicity: {toxicity_score:.2f}. Proceeding to Layer 2b."
 
 
 def safety_check_layer2(user_input: str) -> str:
-    """Layer 2: LLM-based safety & compliance analysis.
+    """Layer 2b: LLM-based contextual safety & compliance analysis.
     
     This layer analyzes user requests against safety and compliance rules,
     returning safety scores and violations WITHOUT making a decision.
@@ -112,7 +133,7 @@ def safety_check_layer2(user_input: str) -> str:
             "analysis": "..."
         }
     """
-    # Create the Layer 2 safety analysis prompt
+    # Create the Layer 2b safety analysis prompt
     layer2_prompt = f"""You are a safety and compliance analyzer for a banking customer service agent.
 
 Your job is to analyze user requests against safety and compliance rules and provide a detailed assessment.
@@ -153,7 +174,7 @@ Return ONLY the JSON object, no other text.
 """
     
     try:
-        # Call Gemini for Layer 2 safety analysis
+        # Call Gemini for Layer 2b safety analysis
         response = genai_client.models.generate_content(
             model=config.agent_settings.model,
             contents=layer2_prompt,
@@ -166,7 +187,7 @@ Return ONLY the JSON object, no other text.
         # Parse the JSON response
         safety_analysis = json.loads(response.text)
         
-        # Log the Layer 2 check
+        # Log the Layer 2b check
         audit_logger.log_event(
             event_type=AuditEventType.USER_QUERY,
             user_id=config.IAM_CURRENT_USER_ID,
