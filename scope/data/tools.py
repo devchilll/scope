@@ -6,6 +6,8 @@ current user; a `user_id` argument only names a target customer, and is
 checked against the caller's role.
 """
 
+import math
+from decimal import Decimal
 from typing import Optional
 from datetime import datetime
 
@@ -313,12 +315,15 @@ def transfer_money(from_account_id: str, to_account_id: str, amount: float, desc
     
     Transfers above the COMP-004 high-value limit (compliance_rules.yaml
     ``thresholds.high_value_amount``) are not executed; an escalation ticket
-    is created for human review instead.
-    
+    is created for human review instead. Same-account transfers and amounts
+    that are not positive, finite numbers with at most 2 decimal places are
+    rejected before any database access. The debit, credit and transaction
+    records are written in one database transaction.
+
     Args:
         from_account_id: Source account ID
-        to_account_id: Destination account ID
-        amount: Amount to transfer
+        to_account_id: Destination account ID (must differ from the source)
+        amount: Amount to transfer (positive, at most 2 decimal places)
         description: Optional description for the transfer
         
     Returns:
@@ -331,10 +336,23 @@ def transfer_money(from_account_id: str, to_account_id: str, amount: float, desc
         iam_user = get_current_user()
         user_id = iam_user.user_id
         
-        # Validate amount
+        # Validate amount: a real number (not bool/str), finite, positive and
+        # in whole cents. Amounts with more than 2 decimal places are rejected
+        # rather than silently rounded.
+        if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+            return "❌ Transfer amount must be a number."
+        if not math.isfinite(amount):
+            return "❌ Transfer amount must be a finite number."
         if amount <= 0:
             return "❌ Transfer amount must be greater than zero."
-        
+        if Decimal(str(amount)).as_tuple().exponent < -2:
+            return "❌ Transfer amount cannot have more than 2 decimal places."
+        amount = float(amount)
+
+        # A transfer to the same account would credit money that was never debited
+        if from_account_id == to_account_id:
+            return "❌ Source and destination accounts must be different."
+
         # Get both accounts to verify ownership and balances
         from_account = db.get_account(iam_user, from_account_id)
         to_account = db.get_account(iam_user, to_account_id)
@@ -420,11 +438,7 @@ def transfer_money(from_account_id: str, to_account_id: str, amount: float, desc
         
         # Create transaction ID
         transaction_id = str(uuid.uuid4())
-        
-        # Update balances
-        from_account.balance -= amount
-        to_account.balance += amount
-        
+
         # Create transaction records
         transfer_desc = description or f"Transfer from {from_account_id} to {to_account_id}"
         
@@ -450,12 +464,12 @@ def transfer_money(from_account_id: str, to_account_id: str, amount: float, desc
             to_account_id=to_account_id
         )
         
-        # Save to database (simplified - in real system would be atomic transaction)
-        db.update_account(from_account)
-        db.update_account(to_account)
-        db.create_transaction(from_txn)
-        db.create_transaction(to_txn)
-        
+        # Debit, credit and both transaction rows commit atomically (or not at
+        # all); the database re-checks funds under its write lock
+        from_balance, to_balance = db.transfer_funds(
+            from_account_id, to_account_id, amount, [from_txn, to_txn]
+        )
+
         # Log for audit
         audit_logger.log_event(
             event_type=AuditEventType.TRANSACTION_QUERY,
@@ -481,8 +495,8 @@ def transfer_money(from_account_id: str, to_account_id: str, amount: float, desc
         return (
             f"✅ Transfer successful!\n\n"
             f"Amount: ${amount:.2f}\n"
-            f"From: {from_account_id} ({from_account.account_type.value}) - New balance: ${from_account.balance:.2f}\n"
-            f"To: {to_account_id} ({to_account.account_type.value}) - New balance: ${to_account.balance:.2f}\n"
+            f"From: {from_account_id} ({from_account.account_type.value}) - New balance: ${from_balance:.2f}\n"
+            f"To: {to_account_id} ({to_account.account_type.value}) - New balance: ${to_balance:.2f}\n"
             f"Transaction ID: {transaction_id}\n"
             f"Description: {transfer_desc}"
         )
