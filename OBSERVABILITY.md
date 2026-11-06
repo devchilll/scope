@@ -3,24 +3,31 @@
 ## Current Implementation ✅
 
 ### 1. **Flow Logging** (Daily Files)
-- **Location**: `scope/logging/audit_logs/audit_YYYY-MM-DD.jsonl`
+- **Location**: `scope/logging/audit_logs/audit_YYYY-MM-DD.jsonl` (the dated file is resolved on every write, so a long-running `adk web` rolls over to a new file at midnight)
 - **Captures**:
-  - User input
-  - Safety check results
-  - LLM requests/responses
-  - Tool calls (account access, transactions, fraud reports)
-  - Final agent responses
+  - User input: the latest user turn of every LLM request, truncated to 500 chars (`before_model_callback`)
+  - Layer 2a safety-check results (toxic-bert scores) and safety blocks (`before_model_callback`)
+  - LLM responses: response text truncated to 500 chars plus the names of any tools the model asked to call (`after_model_callback`). The full prompt sent to the LLM is not logged.
+  - Every tool call, as a `tool_call` event: tool name, arguments (sensitive-looking keys redacted, long strings truncated), user ID and role, and success / error (`after_tool_callback`; tools that raise are logged by `on_tool_error_callback`). Error and permission-denied responses are recorded as `success: false`.
+  - Domain events written by the tools themselves: account access, transaction queries, transfers, fraud reports, escalation tickets, Layer 2b safety analyses and decisions
+  - Final agent responses only when the model calls the optional `log_agent_response` tool; this is not guaranteed for every turn
 - **Format**: Structured JSON (one event per line)
 
 ### 2. **Compliance Logging** (PCI-DSS, SOC2)
 - **PCI-DSS Logs**: `compliance_logs/pci_dss_YYYY-MM-DD.jsonl`
-  - Data access (Requirement 10.2)
-  - Authentication attempts (Requirement 10.2.4)
-  - Privileged actions (Requirement 10.2.2)
 - **SOC2 Logs**: `compliance_logs/soc2_YYYY-MM-DD.jsonl`
-  - Access control decisions (CC6.1)
-  - Data processing activities (CC6.7)
-  - Security incidents (CC7.3)
+
+`scope/logging/compliance_log.py` defines one method per category. Only some are called by the agent today:
+
+| Category | Method | Written today? |
+|----------|--------|----------------|
+| PCI-DSS data access (Req. 10.2) | `log_pci_data_access` | ✅ `get_account_balance`, `get_transaction_history`, `transfer_money` |
+| SOC2 access control (CC6.1) | `log_soc2_access_control` | ✅ `view_audit_logs` only (its `VIEW_LOGS` decision, granted or denied). Other tools' denials show up in the audit trail as failed `tool_call` events, not in the SOC2 log. |
+| SOC2 security incidents (CC7.3) | `log_soc2_incident` | ✅ `report_fraud` |
+| PCI-DSS authentication (Req. 10.2.4) | `log_pci_authentication` | ❌ Defined, not called (there is no login flow; the user comes from `GOOGLE_IAM_CURRENT_USER_*` config) |
+| PCI-DSS privileged actions (Req. 10.2.2) | `log_pci_privileged_action` | ❌ Defined, not called |
+| SOC2 data processing (CC6.7) | `log_soc2_data_processing` | ❌ Defined, not called |
+| General data retention | `log_data_retention` | ❌ Defined, not called |
 
 ### 3. **IAM Access Control**
 - Every agent-facing banking tool checks the caller's role and account ownership
@@ -67,11 +74,15 @@
 
 ---
 
-### 6. **Distributed Tracing** (To Implement)
+### 6. **Distributed Tracing** (Partly Built In)
 
 **Tool**: OpenTelemetry
 
-**What to trace:**
+**Available today (from ADK, no SCOPE code):** ADK emits OpenTelemetry spans for each agent invocation, LLM call and tool execution. `adk web` shows them in its Trace tab, and `adk web --trace_to_cloud` exports them to Google Cloud Trace.
+
+**Still to implement:** a request ID shared between spans and the JSONL audit events, finer-grained spans inside tools (IAM check, database query), and an export pipeline for production.
+
+**Target trace shape:**
 ```
 Request ID: abc123
 ├─ Safety Check (50ms)
@@ -255,8 +266,8 @@ Cold storage (7 years for compliance):
 ## Implementation Priority
 
 ### **Phase 1: Essential** (Implement Now)
-1. ✅ Flow logging (user input → LLM → tools → response)
-2. ✅ Compliance logging (PCI-DSS, SOC2)
+1. ✅ Flow logging (user input → safety check → LLM response → tool calls)
+2. ✅ Compliance logging (PCI-DSS, SOC2), partial: see the table in section 2
 3. ✅ IAM access control
 4. ✅ Escalation queue
 
@@ -267,7 +278,7 @@ Cold storage (7 years for compliance):
 8. Session management
 
 ### **Phase 3: Scale & Optimize** (Next month)
-9. Distributed tracing (OpenTelemetry)
+9. Distributed tracing: request IDs and custom spans on top of ADK's built-in OpenTelemetry spans
 10. Cost tracking
 11. Data retention & archival
 12. Audit log analysis
@@ -283,23 +294,24 @@ Cold storage (7 years for compliance):
 ## Quick Wins
 
 ### **Today:**
-- ✅ All logs in daily files (YYYY-MM-DD format)
+- ✅ All logs in daily files (YYYY-MM-DD format), rolling over at midnight
 - ✅ Structured JSON format
-- ✅ Comprehensive event types
+- ✅ Simple log viewer script (`scope/logging/view_logs.py`)
 
 ### **This Week:**
 - Add request IDs to all logs
 - Add session tracking
-- Create simple log viewer script
 
 ### **Next Week:**
 - Set up basic Grafana dashboard
 - Configure critical alerts
-- Implement log rotation
+- Implement log retention / archival (see section 10)
 
 ---
 
 ## Log Viewer Script (Quick Win)
+
+`scope/logging/view_logs.py` filters and colorizes the audit log (see `scope/logging/README.md`). The same queries with plain `jq`:
 
 ```bash
 # View today's audit logs
@@ -315,4 +327,4 @@ cat audit_*.jsonl | jq -r '.event_type' | sort | uniq -c
 cat audit_*.jsonl | jq 'select(.event_type == "safety_block")'
 ```
 
-This comprehensive strategy ensures full observability and compliance for a production banking application!
+Sections 1-4 describe what the code does today; sections 5 onward are recommendations for a production deployment.

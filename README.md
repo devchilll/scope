@@ -6,7 +6,7 @@ SCOPE, by Ivy Si
 
 - **S**afety Guardrails: ML pre-model gate + LLM contextual safety
 - **C**ompliance & Policy-as-Code: YAML rules the agent must cite
-- **O**bservability & Auditing: JSONL audit trail, PCI-DSS / SOC2 logs, ADK tracing
+- **O**bservability & Auditing: JSONL audit trail, PCI-DSS / SOC2 event logs (selected categories), ADK tracing
 - **P**ermissions & Identity (IAM): USER / STAFF / ADMIN / SYSTEM roles; every banking tool checks the caller's role and account ownership
 - **E**scalation Protocols: human-in-the-loop review queue
 
@@ -82,7 +82,7 @@ Response: "Your checking account acc001 has a balance of $..."
 - 📜 **Policy-as-Code**: Safety and compliance rules live in YAML with IDs the agent must cite
 - 🔐 **Role-Based Access**: USER / STAFF / ADMIN / SYSTEM with role and ownership checks in the banking, escalation-queue and audit-log tools
 - 📊 **Database Tools**: IAM-protected queries to user / account / transaction tables
-- 📝 **Audit Logging**: Every input, safety score, decision, and tool call logged (PCI-DSS, SOC2)
+- 📝 **Audit Logging**: Every input, safety score, model response, decision, and tool call logged, plus selected PCI-DSS / SOC2 events
 - 🚨 **Escalation**: Uncertain cases routed to a human review queue with role-gated resolution
 
 ---
@@ -456,7 +456,11 @@ audit.log_event(event_type=AuditEventType.USER_QUERY, user_id="user",
                 action="custom", details={...})
 ```
 
-Events written automatically by the agent: `user_input`, `safety_check` (with toxic-bert scores), `safety_block`, `safety_layer1_check`, `safety_layer2_analysis`, `safety_decision_made`, `account_access`, `transaction_query`, `escalation_created`, `escalation_resolved`, `llm_response`.
+Events written automatically by the agent, by `action` (each event also has an `event_type`: `user_query`, `tool_call`, `account_access`, `transaction_query`, `safety_block`, `escalation_created` or `escalation_resolved`):
+
+- Callbacks on every turn: `user_input`, `safety_check` (with toxic-bert scores), `safety_block`, `llm_response` (response text truncated to 500 chars, plus requested tool names), and `tool_call_<tool name>` for every tool invocation (arguments redacted/truncated, user ID and role, success or error)
+- Tools: `safety_layer1_check`, `safety_layer2_analysis`, `safety_decision_made`, `account_view_balance`, `query_transactions`, `list_accounts`, `transfer_completed`, `fraud_report`, `create_escalation_ticket`, `ticket_resolved`
+- Failures and denials are written with `success: false` (e.g. `view_balance_failed`, `transfer_unauthorized_source`, `resolve_ticket_unauthorized`)
 
 ### Compliance Logging (PCI-DSS, SOC2)
 
@@ -471,8 +475,10 @@ compliance.log_soc2_incident(user_id="user", incident_type="unauthorized_access_
                              severity="medium", description="Failed login attempt detected")
 ```
 
+Written by the agent today: PCI-DSS data access (balance, transaction history, transfers), SOC2 CC7.3 incidents (fraud reports), and SOC2 CC6.1 access-control decisions for `view_audit_logs`. PCI authentication, PCI privileged actions and SOC2 data processing are defined in `compliance_log.py` but not yet called (see `OBSERVABILITY.md`).
+
 **Log Locations** (git-ignored, one JSON object per line):
-- Audit: `scope/logging/audit_logs/audit_YYYY-MM-DD.jsonl`
+- Audit: `scope/logging/audit_logs/audit_YYYY-MM-DD.jsonl` (all three roll over to a new file at midnight)
 - PCI-DSS: `scope/logging/compliance_logs/pci_dss_YYYY-MM-DD.jsonl`
 - SOC2: `scope/logging/compliance_logs/soc2_YYYY-MM-DD.jsonl`
 
@@ -486,8 +492,8 @@ compliance.log_soc2_incident(user_id="user", incident_type="unauthorized_access_
 ### 🖥️ Terminal Log Viewer
 
 ```bash
-uv run python scope/logging/view_logs.py                 # today's log, interactive
-uv run python scope/logging/view_logs.py --follow        # tail in real time
+uv run python scope/logging/view_logs.py                 # today's log, color-coded table + summary
+uv run python scope/logging/view_logs.py --follow --user staff  # tail in real time (filters apply)
 uv run python scope/logging/view_logs.py --event safety_block --tail 20
 uv run python scope/logging/view_logs.py --date 2026-10-08 --user staff --summary
 ```
@@ -547,6 +553,7 @@ uv run pytest tests/ -v
 - ✅ IAM roles, permissions, access control
 - ✅ Escalation queue: add / view by role / resolve by role / statistics
 - ✅ Agent initialisation and callback registration
+- ✅ Audit trail: a `tool_call` event per tool run (checked through a scripted ADK run), daily log rollover, `view_audit_logs` newest-first, viewer filters in follow mode (tests write to temp dirs only)
 - ⏭️ Gemini-backed Layer 2b / decision tests (require `gcloud auth application-default login`)
 
 See `TESTING.md` for details.
