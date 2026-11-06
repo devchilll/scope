@@ -80,7 +80,7 @@ Response: "Your checking account acc001 has a balance of $..."
 **Key Features:**
 - 🛡️ **Pre-LLM Safety**: Every request is screened by an ML classifier in `before_model_callback` before the model acts; flagged inputs never reach the LLM
 - 📜 **Policy-as-Code**: Safety and compliance rules live in YAML with IDs the agent must cite
-- 🔐 **Role-Based Access**: USER / STAFF / ADMIN / SYSTEM with role and ownership checks in the banking, escalation-queue and audit-log tools
+- 🔐 **Role-Based Access**: USER / STAFF / ADMIN / SYSTEM with role and account-ownership checks in the banking tools; role checks on viewing/resolving escalations and viewing audit logs
 - 📊 **Database Tools**: IAM-protected queries to user / account / transaction tables
 - 📝 **Audit Logging**: Every input, safety score, decision, and tool call logged (PCI-DSS, SOC2)
 - 🚨 **Escalation**: Uncertain cases routed to a human review queue with role-gated resolution
@@ -411,7 +411,7 @@ In the agent, STAFF/ADMIN use the `list_escalation_tickets` and `resolve_escalat
 
 ## 📊 Data Layer
 
-SQLite banking database. The read methods that take an IAM user (`get_account`, `get_user_accounts`, `get_account_transactions`, `get_escalations`, `resolve_escalation`) are IAM-protected; the `create_*` / `update_account` write helpers below are unchecked and meant for seeding or for use after a tool's own checks.
+SQLite banking database. The methods that take an IAM user (`get_account`, `get_user_accounts`, `get_account_transactions`, `get_escalations`, `resolve_escalation`) are IAM-protected; the `create_*` / `update_account` write helpers below are unchecked and meant for seeding or for use after a tool's own checks.
 
 ```python
 from scope.data import Database, User, Account, Transaction, AccountType, TransactionType

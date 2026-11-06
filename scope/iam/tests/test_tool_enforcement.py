@@ -1,7 +1,9 @@
 """Tests that the agent-facing banking tools enforce IAM as the current user.
 
 Each test runs against a temporary SQLite database and mocked loggers, so
-nothing is written to scope/data/storage/banking.db or the audit log files.
+the tests write no rows to scope/data/storage/banking.db and nothing to the
+audit log files. (Importing scope.data.tools still runs Database() at import
+time, which creates an empty banking.db schema if the file does not exist.)
 """
 
 from types import SimpleNamespace
@@ -119,6 +121,34 @@ class TestRoleDescriptions:
             assert ("resolv" in get_role_description(role)) == can_resolve
 
 
+class TestAccountBalanceIAM:
+    """get_account_balance only shows accounts the current user may access."""
+
+    def test_user_reads_own_balance(self, env):
+        assert "$100.00" in tools.get_account_balance("acc001")
+
+    def test_user_cannot_read_other_users_balance(self, env):
+        result = tools.get_account_balance("acc002")
+        assert "$100.00" not in result
+        assert result == "Account acc002 not found or not accessible."
+        env.audit.log_account_access.assert_not_called()
+        env.compliance.log_pci_data_access.assert_not_called()
+        failure = env.audit.log_event.call_args.kwargs
+        assert failure["user_id"] == "user1"
+        assert failure["success"] is False
+        assert "cannot access account acc002" in failure["error"]
+
+    def test_missing_and_inaccessible_accounts_get_the_same_reply(self, env):
+        other = tools.get_account_balance("acc002")
+        missing = tools.get_account_balance("acc999")
+        assert other.replace("acc002", "X") == missing.replace("acc999", "X")
+        assert "does not exist" in env.audit.log_event.call_args.kwargs["error"]
+
+    def test_staff_reads_customer_balance(self, env):
+        env.act_as("staff1", "STAFF")
+        assert "$100.00" in tools.get_account_balance("acc002")
+
+
 class TestTransactionHistoryIAM:
     """get_transaction_history always acts as the current user."""
 
@@ -142,7 +172,13 @@ class TestTransactionHistoryIAM:
     def test_user_cannot_read_other_users_transactions_without_user_id(self, env):
         result = tools.get_transaction_history("acc002")
         assert "Deposit to acc002" not in result
-        assert "Error accessing transactions" in result
+        assert result == "Account acc002 not found or not accessible."
+        env.audit.log_transaction_query.assert_not_called()
+        # The precise reason is kept in the audit log
+        failure = env.audit.log_event.call_args.kwargs
+        assert failure["user_id"] == "user1"
+        assert failure["success"] is False
+        assert "cannot access account acc002" in failure["error"]
 
     def test_staff_reads_customer_transactions_as_staff(self, env):
         env.act_as("staff1", "STAFF")
@@ -191,8 +227,9 @@ class TestReportFraudIAM:
 
     def test_user_cannot_report_fraud_on_other_users_account(self, env):
         result = tools.report_fraud("acc002", "Unknown charge")
-        assert "Error submitting fraud report" in result
+        assert result == "Account acc002 not found or not accessible."
         assert all_tickets(env.db) == []
+        assert "cannot access account acc002" in env.audit.log_event.call_args.kwargs["error"]
 
     def test_user_cannot_file_for_another_user(self, env):
         result = tools.report_fraud("acc002", "Unknown charge", user_id="user2")
@@ -202,8 +239,9 @@ class TestReportFraudIAM:
 
     def test_unknown_account_is_rejected(self, env):
         result = tools.report_fraud("acc999", "Unknown charge")
-        assert "not found" in result
+        assert result == "Account acc999 not found or not accessible."
         assert all_tickets(env.db) == []
+        assert "does not exist" in env.audit.log_event.call_args.kwargs["error"]
 
     def test_staff_files_for_customer(self, env):
         env.act_as("staff1", "STAFF")
@@ -222,3 +260,55 @@ class TestReportFraudIAM:
         result = tools.report_fraud("acc002", "Customer called in", user_id="user1")
         assert "does not belong to user user1" in result
         assert all_tickets(env.db) == []
+
+
+class TestTransferMoneyIAM:
+    """transfer_money only moves money between the current user's own accounts."""
+
+    @pytest.fixture
+    def env(self, env):
+        """Add acc003, a second account owned by user1."""
+        env.db.create_account(Account(
+            account_id="acc003",
+            user_id="user1",
+            account_type=AccountType.SAVINGS,
+            balance=100.0,
+        ))
+        return env
+
+    def balances(self, db):
+        admin = IAMUser("admin1", UserRole.ADMIN)
+        return {a: db.get_account(admin, a).balance for a in ("acc001", "acc002", "acc003")}
+
+    def test_user_transfers_between_own_accounts(self, env):
+        result = tools.transfer_money("acc001", "acc003", 30.0)
+        assert "Transfer successful" in result
+        assert self.balances(env.db) == {"acc001": 70.0, "acc002": 100.0, "acc003": 130.0}
+
+    def test_user_cannot_transfer_from_other_users_account(self, env):
+        result = tools.transfer_money("acc002", "acc001", 30.0)
+        assert "Transfer successful" not in result
+        assert "acc002 not found or you don't have access to it" in result
+        assert self.balances(env.db) == {"acc001": 100.0, "acc002": 100.0, "acc003": 100.0}
+
+    def test_user_cannot_transfer_to_other_users_account(self, env):
+        result = tools.transfer_money("acc001", "acc002", 30.0)
+        assert "Transfer successful" not in result
+        assert "acc002 not found or you don't have access to it" in result
+        assert self.balances(env.db) == {"acc001": 100.0, "acc002": 100.0, "acc003": 100.0}
+        assert "cannot access account acc002" in env.audit.log_event.call_args.kwargs["error"]
+
+    def test_missing_and_inaccessible_destination_get_the_same_reply(self, env):
+        other = tools.transfer_money("acc001", "acc002", 30.0)
+        missing = tools.transfer_money("acc001", "acc999", 30.0)
+        assert other.replace("acc002", "X") == missing.replace("acc999", "X")
+
+    def test_staff_cannot_move_customer_money(self, env):
+        env.act_as("staff1", "STAFF")
+        result = tools.transfer_money("acc002", "acc001", 30.0)
+        assert "Transfer successful" not in result
+        assert "only transfer from your own accounts" in result
+        assert self.balances(env.db) == {"acc001": 100.0, "acc002": 100.0, "acc003": 100.0}
+        blocked = env.audit.log_event.call_args.kwargs
+        assert blocked["user_id"] == "staff1"
+        assert blocked["action"] == "transfer_unauthorized_source"
