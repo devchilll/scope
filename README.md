@@ -148,8 +148,9 @@ scope/
     ├── compliance_log.py  # ComplianceLogger (PCI-DSS, SOC2)
     └── view_logs.py       # Terminal log viewer
 
-tests/                     # Callback + integration tests
+tests/                     # Callback, transfer + integration tests
 scope/*/tests/             # Per-pillar unit tests
+scope/tests/               # Prompt tool list, safety_check_layer1 tool, DB writes
 ```
 
 ---
@@ -544,6 +545,8 @@ See `OBSERVABILITY.md` for the logging strategy and `ADK_TOOL_CALLING.md` for ho
 
 ## 🧪 Testing
 
+`pytest` is in the `dev` dependency group, which `uv run` installs by default. The suite collects 203 tests; without Google Cloud credentials 199 pass and the 4 Gemini-backed tests skip.
+
 ```bash
 # Everything (Gemini-backed tests skip automatically without GCP credentials)
 uv run pytest
@@ -556,6 +559,7 @@ uv run pytest scope/safety/tests/ -v        # image test downloads the NSFW mode
 uv run pytest scope/compliance/tests/ -v
 uv run pytest scope/iam/tests/ -v
 uv run pytest scope/escalation/tests/ -v
+uv run pytest scope/tests/ -v
 uv run pytest tests/ -v
 ```
 
@@ -563,14 +567,18 @@ uv run pytest tests/ -v
 - ✅ Pre-model gate: latest user turn only, safe passes, toxic blocked before the LLM, screened once per turn (tool loop reuses the decision), blocked text withheld from later requests (also end-to-end through ADK's runner with a fake LLM), gate span attributes, fail-open when model unavailable, config disable (callback and `safety_check_layer1` tool)
 - ✅ Image check failure reports an unknown result, never "safe"
 - ✅ Text classifier thresholds (high / severe), empty input, unavailable model
+- ✅ `safety_check_layer1` tool: PASSED / FAILED / SKIPPED (model not loaded) results and audit event (fake model)
 - ✅ Compliance rule transformation
-- ✅ IAM roles, permissions, access control
+- ✅ IAM roles, permissions, access control; prompt lists only the tools each role may use
 - ✅ Escalation queue: add / view by role / resolve by role / statistics / metadata
 - ✅ Escalation wiring: configured threshold in the decision prompt, ticket confidence, COMP-004 high-value transfer guard, custom compliance rules in the instruction
 - ✅ Transfers: same-account and non-numeric / non-finite / sub-cent amounts rejected, debit + credit + transaction rows all-or-nothing, funds re-checked in the transaction, balances kept in cents, no connection left open after a failed query
 - ✅ Agent initialisation and callback registration
-- ✅ Audit trail: a `tool_call` event per tool run (checked through a scripted ADK run), daily log rollover, `view_audit_logs` newest-first, viewer filters in follow mode (tests write to temp dirs only)
-- ⏭️ Gemini-backed Layer 2b / decision tests (require `gcloud auth application-default login`)
+- ✅ Decision step (mocked Gemini client): prompt defines the four actions and requires `rewrite` for COMP-001; a failed decision call escalates
+- ✅ Audit trail: a `tool_call` event per tool run (checked through a scripted ADK run), daily log rollover, `view_audit_logs` newest-first, viewer filters in follow mode
+- ⏭️ Gemini-backed Layer 2b / decision tests (require `gcloud auth application-default login`; they fail if the tool fell back to its error response)
+
+Tests write only to temporary SQLite files and temporary log directories, never to `scope/data/storage/banking.db` or `scope/logging/*_logs` (importing the banking tools still initialises the default database's schema, creating an empty file if it is missing).
 
 See `TESTING.md` for details.
 
