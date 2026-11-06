@@ -6,6 +6,7 @@ current user; a `user_id` argument only names a target customer, and is
 checked against the caller's role.
 """
 
+import threading
 from typing import Optional
 from datetime import datetime
 
@@ -15,8 +16,33 @@ from ..iam import User as IAMUser, UserRole, AccessControl, AccessDeniedExceptio
 from ..logging import get_audit_logger, get_compliance_logger, AuditEventType
 from ..config import Config
 
-# Initialize database, loggers, and config
-db = Database()
+class _DefaultDatabase:
+    """The default banking Database, created on first use rather than at import.
+
+    Importing this module therefore does not create or open
+    scope/data/storage/banking.db. The first access to a public attribute
+    (e.g. ``db.get_account`` in a tool call) creates ``Database()``; every
+    public attribute is then forwarded to it.
+    """
+
+    def __init__(self):
+        self._database: Optional[Database] = None
+        self._lock = threading.Lock()
+
+    def __getattr__(self, name):
+        # Only public Database attributes are forwarded. Private and dunder
+        # lookups (e.g. mock.patch probing ``__func__`` / ``_is_coroutine``)
+        # must not open the database.
+        if name.startswith("_"):
+            raise AttributeError(name)
+        with self._lock:
+            if self._database is None:
+                self._database = Database()
+        return getattr(self._database, name)
+
+
+# Initialize database (lazily), loggers, and config
+db = _DefaultDatabase()
 audit_logger = get_audit_logger()
 compliance_logger = get_compliance_logger()
 config = Config()

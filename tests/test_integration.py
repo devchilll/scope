@@ -1,7 +1,8 @@
 """Integration tests for SCOPE agent functionality.
 
 Escalation tests use a temporary SQLite database. The Gemini-backed Layer 2b
-and decision tests skip without Google Cloud credentials, run with the role
+and decision tests skip unless the client the tools use has credentials
+(Vertex AI: Application Default Credentials; Gemini API: an API key), run with the role
 set on the module-level config the tools read, and fail if the tool returned
 its error fallback instead of a model answer.
 """
@@ -22,18 +23,28 @@ from scope.observability_tools import (
 from scope.config import Config
 
 
-def _has_gcp_credentials() -> bool:
-    """Layer 2b / decision tools call Gemini on Vertex AI and need ADC."""
+def _has_llm_credentials() -> bool:
+    """Whether the Gemini client used by the Layer 2b / decision tools can authenticate.
+
+    GOOGLE_GENAI_USE_VERTEXAI=true (the default) selects Vertex AI, which needs
+    Application Default Credentials; any other value selects the Gemini API,
+    which reads GOOGLE_API_KEY (or GEMINI_API_KEY) from the environment.
+    """
     import os
-    if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
-        return True
-    adc = Path.home() / ".config" / "gcloud" / "application_default_credentials.json"
-    return adc.exists()
+    if obs_tools.config.GENAI_USE_VERTEXAI.strip().lower() in ("true", "1"):
+        if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+            return True
+        adc = Path.home() / ".config" / "gcloud" / "application_default_credentials.json"
+        return adc.exists()
+    return bool(os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY"))
 
 
 requires_llm = pytest.mark.skipif(
-    not _has_gcp_credentials(),
-    reason="Requires Google Cloud credentials (gcloud auth application-default login)",
+    not _has_llm_credentials(),
+    reason=(
+        "Requires Gemini credentials: Vertex AI ADC (gcloud auth application-default login) "
+        "or, with GOOGLE_GENAI_USE_VERTEXAI=false, GOOGLE_API_KEY"
+    ),
 )
 
 

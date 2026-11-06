@@ -1,15 +1,15 @@
 # SCOPE Test Suite
 
-Unit and integration tests for the SCOPE framework's 5 pillars: 240 tests
-collected (`uv run pytest --co -q`). Without Google Cloud credentials 236 pass
-and the 4 Gemini-backed tests skip.
+Unit and integration tests for the SCOPE framework's 5 pillars: 249 tests
+collected (`uv run pytest --co -q`). Without Gemini credentials (see Notes) 245
+pass and the 4 Gemini-backed tests skip.
 
 ## Test Structure
 
 ```
 scope/
 ├── safety/tests/
-│   ├── test_safety.py          # Image safety tool (3 tests)
+│   ├── test_safety.py          # Image safety tool (4 tests)
 │   └── test_text_safety.py     # Text safety classifier, fake model (11 tests)
 ├── compliance/tests/
 │   └── test_compliance.py      # Rule transformation (5 tests)
@@ -29,7 +29,7 @@ tests/
 ├── test_callbacks.py           # Pre-model safety gate (before_model_callback) (35 tests)
 ├── test_escalation_config.py   # Escalation threshold, COMP-004 transfer guard, custom rules (17 tests)
 ├── test_integration.py         # Escalation queue on a temp DB, Gemini-backed Layer 2b / decision (9 tests, 4 need credentials)
-└── test_transfer_validation.py # transfer_money validation, atomic transfer, connection cleanup (27 tests)
+└── test_transfer_validation.py # transfer_money validation, atomic transfer, connection cleanup (35 tests)
 ```
 
 ## Running Tests
@@ -69,8 +69,9 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 
 ## Test Coverage
 
-### Pillar 1: Safety (14 tests)
-- ✅ ImageSafetyTool initialises (processor and model loaded) and exposes `check`
+### Pillar 1: Safety (15 tests)
+- ✅ ImageSafetyTool initialises (processor and model loaded)
+- ✅ ImageSafetyTool `check` returns the softmax NSFW probability and `is_safe` (score ≤ 0.5) (stub processor and model, no download)
 - ✅ A failed image check returns an unknown result (`checked: false`), never "safe"
 - ✅ TextSafetyTool: safe / toxic / severe-toxicity / threshold / empty input / model unavailable /
   long text classified in overlapping windows, max score per category
@@ -81,7 +82,7 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 - ✅ Model unavailable → `SKIPPED (model not loaded)`, logged with `success: false`, never `PASSED`
 - Fake classifier and mocked audit logger, no download (the config-disabled path is in `tests/test_callbacks.py`)
 
-### Pre-model safety gate (`tests/test_callbacks.py`)
+### Pre-model safety gate (35 tests, `tests/test_callbacks.py`)
 - ✅ The new message is screened, whatever role the client gave it; without text, the latest user turn
 - ✅ Safe input continues to the LLM
 - ✅ Toxic input returns a refusal `LlmResponse` before the model is called
@@ -156,7 +157,7 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 - ✅ Agent initialization
 - ✅ Config loading (safety / compliance / escalation policy)
 - ✅ Safety callback importable; shared text classifier object can be created (no behaviour checked here)
-- ✅ Compliance rules loaded
+- ✅ Compliance rules COMP-001 to COMP-007 and the COMP-004 `high_value_amount` threshold loaded from `compliance_rules.yaml`; every rule ID appears in the agent instruction
 - ✅ Rule transformation
 - ✅ Decision prompt defines approve / reject / rewrite / escalate and requires `rewrite` for COMP-001 (mocked Gemini client)
 - ✅ The model's decision is returned unchanged; a failed decision call fails safe to `escalate`
@@ -169,10 +170,10 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 - ✅ STAFF sees every user's tickets; USER sees exactly their own
 - ✅ The Layer 2b prompt carries the role from the module-level config the tool reads (mocked client)
 - ⏭️ Gemini-backed: STAFF request for all tickets scores as safe; USER request gets a real analysis;
-  high scores → `approve`; low scores → `reject` or `escalate`. These skip without Google Cloud
-  credentials and fail if the tool returned its error fallback instead of a model answer.
+  high scores → `approve`; low scores → `reject` or `escalate`. These skip without Gemini
+  credentials (see Notes) and fail if the tool returned its error fallback instead of a model answer.
 
-### Escalation & config wiring (`tests/test_escalation_config.py`)
+### Escalation & config wiring (17 tests, `tests/test_escalation_config.py`)
 - ✅ Decision prompt uses `GOOGLE_ESCALATION_THRESHOLD` (default 0.6) for both the escalate and approve conditions, and the configured model
 - ✅ `GOOGLE_GENAI_USE_VERTEXAI` selects Vertex AI or the Gemini API client
 - ✅ `create_escalation_ticket` stores the Layer 2b confidence (default 0.0, clamped to 0-1)
@@ -187,7 +188,7 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 - ✅ `view_audit_logs` newest-first, event-type filter, access decision logged as SOC2 CC6.1
 - ✅ `view_logs.py` follow mode applies filters
 
-### Transfers (27 tests, `tests/test_transfer_validation.py`)
+### Transfers (35 tests, `tests/test_transfer_validation.py`)
 - ✅ Same-account transfers rejected (tool and database), no balance change
 - ✅ NaN / ±inf, an int too large for a float (`10**400`), non-numeric (`"50"`, `None`, `True`), zero / negative and sub-cent (> 2 decimal places) amounts rejected before any database access
 - ✅ `Database.transfer_funds` called directly rejects the same invalid amounts (e.g. `0.005`, `0.025`, NaN) with `ValueError`; nothing is written
@@ -207,7 +208,7 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 
 ## Notes
 
-- Gemini-backed tests in `tests/test_integration.py` use `pytest.mark.skipif` (`requires_llm`) and run only when `GOOGLE_APPLICATION_CREDENTIALS` is set or `gcloud auth application-default login` has been run
-- Tests that write rows use temporary SQLite files (`tmp_path`); no test writes to `scope/data/storage/banking.db`. Importing `scope.data.tools` (the agent's banking tools) still initialises the schema of that default database, creating an empty file if it does not exist
+- Gemini-backed tests in `tests/test_integration.py` use `pytest.mark.skipif` (`requires_llm`) and run only when the client the tools use has credentials: with `GOOGLE_GENAI_USE_VERTEXAI=true` (the default, Vertex AI), when `GOOGLE_APPLICATION_CREDENTIALS` is set or `gcloud auth application-default login` has been run; with `GOOGLE_GENAI_USE_VERTEXAI=false` (Gemini API), when `GOOGLE_API_KEY` or `GEMINI_API_KEY` is set in the environment
+- Tests that write rows use temporary SQLite files (`tmp_path`); no test writes to `scope/data/storage/banking.db`. The banking tools open that default database only on first use (not at import), so the suite does not create it in a fresh checkout
 - `conftest.py` redirects the audit and compliance loggers to per-test temporary directories, so tests never write to `scope/logging/audit_logs` or `scope/logging/compliance_logs`
 - All tests use pytest fixtures for setup/teardown

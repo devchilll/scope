@@ -56,10 +56,19 @@ class TestComplianceEnforcement:
     """Test compliance rule enforcement."""
     
     def test_compliance_rules_loaded(self):
-        """Test that compliance rules are loaded."""
-        config = Config()
-        policy = config.current_policy
-        assert policy.compliance.enabled is not None
+        """compliance_rules.yaml is loaded: rules COMP-001..COMP-007 and the
+        COMP-004 high-value threshold, and every rule ID appears in the
+        formatted rules text and in the agent instruction."""
+        from scope.prompt import build_instruction
+        from scope.rules import COMPLIANCE_CONFIG, COMPLIANCE_RULES_TEXT
+
+        expected_ids = [f"COMP-00{i}" for i in range(1, 8)]
+        assert [rule["id"] for rule in COMPLIANCE_CONFIG["compliance_rules"]] == expected_ids
+        assert float(COMPLIANCE_CONFIG["thresholds"]["high_value_amount"]) > 0
+        instruction = build_instruction()
+        for rule_id in expected_ids:
+            assert f"**{rule_id}**" in COMPLIANCE_RULES_TEXT
+            assert f"**{rule_id}**" in instruction
     
     def test_rule_transformation(self):
         """Test that rules are transformed correctly."""

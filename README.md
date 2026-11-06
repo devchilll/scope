@@ -555,10 +555,10 @@ See `OBSERVABILITY.md` for the logging strategy and `ADK_TOOL_CALLING.md` for ho
 
 ## 🧪 Testing
 
-`pytest` is in the `dev` dependency group, which `uv run` installs by default. The suite collects 240 tests; without Google Cloud credentials 236 pass and the 4 Gemini-backed tests skip.
+`pytest` is in the `dev` dependency group, which `uv run` installs by default. The suite collects 249 tests; without Gemini credentials 245 pass and the 4 Gemini-backed tests skip.
 
 ```bash
-# Everything (Gemini-backed tests skip automatically without GCP credentials)
+# Everything (Gemini-backed tests skip automatically without Gemini credentials)
 uv run pytest
 
 # Pre-model safety gate + classifier wrapper (fast, fake model, no download)
@@ -586,9 +586,9 @@ uv run pytest tests/ -v
 - ✅ Agent initialisation and callback registration
 - ✅ Decision step (mocked Gemini client): prompt defines the four actions and requires `rewrite` for COMP-001; a failed decision call escalates
 - ✅ Audit trail: a `tool_call` event per tool run (checked through a scripted ADK run), daily log rollover, `view_audit_logs` newest-first, viewer filters in follow mode
-- ⏭️ Gemini-backed Layer 2b / decision tests (require `gcloud auth application-default login`; they fail if the tool fell back to its error response)
+- ⏭️ Gemini-backed Layer 2b / decision tests (require Vertex AI credentials, e.g. `gcloud auth application-default login`, or with `GOOGLE_GENAI_USE_VERTEXAI=false` a `GOOGLE_API_KEY`; they fail if the tool fell back to its error response)
 
-Tests write only to temporary SQLite files and temporary log directories, never to `scope/data/storage/banking.db` or `scope/logging/*_logs` (importing the banking tools still initialises the default database's schema, creating an empty file if it is missing).
+Tests write only to temporary SQLite files and temporary log directories, never to `scope/data/storage/banking.db` or `scope/logging/*_logs`; the banking tools open the default database only on first use, so a test run does not create it in a fresh checkout.
 
 See `TESTING.md` for details.
 
