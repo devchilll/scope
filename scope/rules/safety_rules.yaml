@@ -1,4 +1,4 @@
-# PRIME Safety Rules Configuration
+# SCOPE Safety Rules Configuration
 # These rules define what content is considered unsafe and should be blocked or escalated
 
 safety_rules:

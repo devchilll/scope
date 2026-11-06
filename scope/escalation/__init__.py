@@ -1,4 +1,4 @@
-"""Escalation module for PRIME guardrails.
+"""Escalation module for SCOPE.
 
 This package contains escalation queue management with SQLite storage.
 """

@@ -1,11 +1,9 @@
-*__pycache__*
 *.pdf
-article.md
-_cache_img
-google_adk-.*.whl
 _tmp*
 *.env*
-*.txt*
+*.txt
+!requirements*.txt
+!LICENSE*
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -168,12 +166,6 @@ test_*.db
 test_*.json
 **/tests/**/*.json
 
-# Escalation queue data (production DB should be configured via env)
-prime_guardrails/escalation/data/*.db
-prime_guardrails/escalation/data/*.json
-!prime_guardrails/escalation/data/.gitignore
-!prime_guardrails/escalation/data/README.md
-
 # ML model cache
 .cache/
 models/
@@ -192,10 +184,3 @@ temp/
 
 # compressed files
 *.zip
-
-# demo 
-demo/
-
-
-# naive agent
-naive_agent/

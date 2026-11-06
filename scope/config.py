@@ -4,7 +4,6 @@ from typing import List, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import BaseModel, Field
 
-logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 class AgentModel(BaseModel):
@@ -16,8 +15,8 @@ class BankInfo(BaseModel):
     """Bank contact and information settings."""
     name: str = Field(default="SCOPE Bank")
     phone: str = Field(default="1-800-SCOPE-BANK")
-    email: str = Field(default="support@scopebank.com")
-    website: str = Field(default="https://www.scopebank.com")
+    email: str = Field(default="support@example.com")
+    website: str = Field(default="https://www.example.com")
     hours: str = Field(default="Monday-Friday 9AM-5PM EST, Saturday 10AM-2PM EST")
     address: str = Field(default="123 Banking Street, Financial District, NY 10004")
 
@@ -43,7 +42,7 @@ class ComplianceConfig(BaseModel):
     transformed_rules: List[str] = Field(default_factory=list)  # Agent-ready format
 
 # ============================================================================
-# PILLAR 3: IAM Configuration
+# PILLAR 4: IAM Configuration
 # ============================================================================
 
 class IAMConfig(BaseModel):
@@ -54,7 +53,7 @@ class IAMConfig(BaseModel):
     session_timeout_minutes: int = 60
 
 # ============================================================================
-# PILLAR 4: Escalation Configuration
+# PILLAR 5: Escalation Configuration
 # ============================================================================
 
 class EscalationConfig(BaseModel):
@@ -70,7 +69,7 @@ class EscalationConfig(BaseModel):
 # ============================================================================
 
 class Policy(BaseModel):
-    """Combined policy configuration - The 4 Pillars of SCOPE."""
+    """Combined policy configuration - policy-backed SCOPE pillars."""
     safety: SafetyPolicy = Field(default_factory=SafetyPolicy)
     compliance: ComplianceConfig = Field(default_factory=ComplianceConfig)
     iam: IAMConfig = Field(default_factory=IAMConfig)
@@ -114,7 +113,7 @@ class Config(BaseSettings):
     COMPLIANCE_ENABLED: bool = Field(default=True)
     COMPLIANCE_RULES: List[str] = Field(default_factory=list)
     
-    # Pillar 3: IAM    # IAM Pillar
+    # Pillar 4: IAM
     IAM_ENABLED: bool = Field(default=True)
     IAM_DEFAULT_USER_ROLE: str = Field(default="USER")
     IAM_REQUIRE_AUTHENTICATION: bool = Field(default=False)
@@ -128,7 +127,7 @@ class Config(BaseSettings):
     IAM_CURRENT_USER_PHONE: str = Field(default="+1-555-0123")
     IAM_CURRENT_USER_ADDRESS: str = Field(default="123 Customer Street, Banking City, NY 10001")
 
-    # Escalation Pillar 4: Escalation Configuration
+    # Pillar 5: Escalation Configuration
     ESCALATION_ENABLED: bool = Field(default=True)
     ESCALATION_THRESHOLD: float = Field(default=0.6)
     ESCALATION_STORAGE_TYPE: str = Field(default="sqlite")
@@ -137,7 +136,7 @@ class Config(BaseSettings):
 
     @property
     def current_policy(self) -> Policy:
-        """Returns structured policy object with all 4 pillars.
+        """Returns structured policy object for the policy-backed pillars.
         
         Returns:
             Policy object containing safety, compliance, IAM, and escalation configs
@@ -157,7 +156,7 @@ class Config(BaseSettings):
             transformed_rules=[]  # Will be populated at agent init
         )
         
-        # Pillar 3: IAM
+        # Pillar 4: IAM
         iam = IAMConfig(
             enabled=self.IAM_ENABLED,
             default_user_role=self.IAM_DEFAULT_USER_ROLE,
@@ -165,7 +164,7 @@ class Config(BaseSettings):
             session_timeout_minutes=self.IAM_SESSION_TIMEOUT_MINUTES
         )
         
-        # Pillar 4: Escalation
+        # Pillar 5: Escalation
         escalation = EscalationConfig(
             enabled=self.ESCALATION_ENABLED,
             threshold=self.ESCALATION_THRESHOLD,

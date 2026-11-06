@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Audit Log Viewer - Terminal-based visualization of PRIME audit logs
+Audit Log Viewer - Terminal-based visualization of SCOPE audit logs
 
 Usage:
     python view_logs.py                          # View all logs from today
@@ -280,7 +280,7 @@ def follow_logs(log_file: Path, verbose: bool = False):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='View and analyze PRIME audit logs',
+        description='View and analyze SCOPE audit logs',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

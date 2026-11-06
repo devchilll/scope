@@ -10,9 +10,6 @@ SCOPE, by Ivy Si
 - **P**ermissions & Identity (IAM): USER / STAFF / ADMIN / SYSTEM roles enforced in every tool
 - **E**scalation Protocols: human-in-the-loop review queue
 
-![SCOPE Web UI](example_web_ui.png)
-*SCOPE agent running in the ADK Web UI*
-
 ---
 
 ## 🎯 Use Case: Banking Customer Service Agent
@@ -133,10 +130,10 @@ scope/
 │   ├── compliance_rules.yaml  # COMP-001..007
 │   └── loader.py          # Renders rules into prompt text
 ├── compliance/            # Rule transformation helpers + industry example rule sets
-├── iam/                   # Pillar 3
+├── iam/                   # Pillar 4
 │   ├── roles.py           # UserRole, Permission, role → permission map
 │   └── acl.py             # User, AccessControl, AccessDeniedException
-├── escalation/            # Pillar 4
+├── escalation/            # Pillar 5
 │   ├── models.py          # EscalationTicket
 │   └── queue.py           # EscalationQueue (stored in the banking database)
 ├── data/                  # Database layer
@@ -152,7 +149,6 @@ scope/
 
 tests/                     # Callback + integration tests
 scope/*/tests/             # Per-pillar unit tests
-scripts/                   # Ad-hoc dev checks (users, escalation timestamps, prompt, observability tools)
 ```
 
 ---
@@ -204,13 +200,13 @@ GOOGLE_SAFETY_USE_ML_MODELS=true      # false skips the pre-model classifier (lo
 GOOGLE_COMPLIANCE_ENABLED=true
 GOOGLE_COMPLIANCE_RULES=["Never share full account numbers"]
 
-# Pillar 3: IAM - who the agent is acting for (see "Switching roles")
+# Pillar 4: IAM - who the agent is acting for (see "Switching roles")
 GOOGLE_IAM_ENABLED=true
 GOOGLE_IAM_CURRENT_USER_ID=user
 GOOGLE_IAM_CURRENT_USER_ROLE=USER     # USER | STAFF | ADMIN | SYSTEM
 GOOGLE_IAM_CURRENT_USER_NAME="Alice Johnson"
 
-# Pillar 4: Escalation
+# Pillar 5: Escalation
 GOOGLE_ESCALATION_ENABLED=true
 GOOGLE_ESCALATION_THRESHOLD=0.6
 ```
@@ -318,7 +314,7 @@ safety_rules:
 
 ---
 
-## 👥 Pillar 3: IAM (Identity & Access Management)
+## 👥 Pillar 4: IAM (Identity & Access Management)
 
 Role-based access control enforced inside every tool.
 
@@ -366,7 +362,7 @@ Agent tools: `get_account_balance`, `get_transaction_history`, `get_user_account
 
 ---
 
-## 🎫 Pillar 4: Escalation
+## 🎫 Pillar 5: Escalation
 
 Human-in-the-loop review queue. Tickets are stored in the `escalations` table of the banking SQLite database (`scope/data/storage/banking.db`).
 
@@ -408,7 +404,7 @@ In the agent, STAFF/ADMIN use the `list_escalation_tickets` and `resolve_escalat
 
 ---
 
-## 📊 Module 5: Data
+## 📊 Data Layer
 
 SQLite banking database with IAM-protected operations.
 
@@ -438,7 +434,7 @@ Seed data (`uv run python scope/data/seed_database.py`): user `user` (Alice John
 
 ---
 
-## 📝 Module 6: Logging
+## 📝 Pillar 3: Observability & Logging
 
 ### Audit Logging
 

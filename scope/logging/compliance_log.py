@@ -33,19 +33,19 @@ class ComplianceLogger:
         
         # PCI-DSS log (Payment Card Industry Data Security Standard)
         self.pci_logger = self._create_logger(
-            "prime.compliance.pci",
+            "scope.compliance.pci",
             log_dir / f"pci_dss_{today}.jsonl"
         )
         
         # SOC2 log (Service Organization Control 2)
         self.soc2_logger = self._create_logger(
-            "prime.compliance.soc2",
+            "scope.compliance.soc2",
             log_dir / f"soc2_{today}.jsonl"
         )
         
         # General compliance log
         self.general_logger = self._create_logger(
-            "prime.compliance.general",
+            "scope.compliance.general",
             log_dir / f"compliance_{today}.jsonl"
         )
     

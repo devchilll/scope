@@ -1,4 +1,4 @@
-"""Integration tests for the PRIME agentic system.
+"""Integration tests for the SCOPE agentic system.
 
 These tests verify the end-to-end functionality of the agent including:
 - Safety checks (Layer 2)

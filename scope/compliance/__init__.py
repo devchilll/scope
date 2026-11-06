@@ -1,4 +1,4 @@
-"""Compliance module for PRIME guardrails.
+"""Compliance module for SCOPE.
 
 This package contains compliance rule transformation and management.
 """

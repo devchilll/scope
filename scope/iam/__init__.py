@@ -1,4 +1,4 @@
-"""IAM (Identity and Access Management) module for PRIME system."""
+"""IAM (Identity and Access Management) module for SCOPE."""
 
 from .acl import User, AccessControl, AccessDeniedException, check_permission
 from .roles import (
