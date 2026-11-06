@@ -12,14 +12,18 @@ callback) stays cheap, and so unit tests can inject a fake model.
 
 toxic-bert reads at most 512 tokens, and Detoxify silently truncates longer
 input. So that the whole message is classified, longer text is split into
-overlapping windows that each fit, every window is classified, and the
-highest score per category is used.
+overlapping windows that each fit, all windows are classified in one batched
+call, and the highest score per category is used. Text that would need more
+than ``MAX_WINDOWS`` windows (or is longer than ``MAX_CHARS`` characters) is
+not classified: it is reported as unsafe with risk category ``too_long``
+(fail closed), which bounds the CPU time one message can cost.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any, Mapping, Optional
+import threading
+from typing import Any, List, Optional, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +55,17 @@ _CHUNK_OVERLAP_TOKENS = 100
 # scripts, so 500-character windows stay under 512 tokens.
 _CHUNK_CHARS = 500
 _CHUNK_OVERLAP_CHARS = 100
+
+# Upper bound on the work one text can cost. A window takes roughly 0.2-0.35 s
+# of CPU with toxic-bert, so 6 windows (1,900 tokens, roughly 8,000-9,000
+# characters of English) keep the worst case near 1-2 s (measured 1.3-2.1 s
+# on a laptop CPU). Longer text is reported as unsafe (``too_long``) without
+# being classified. ``MAX_CHARS`` rejects very long input before it is
+# tokenized; it never binds first for ordinary text (English averages well
+# under 6 characters per BERT token).
+MAX_WINDOWS = 6
+MAX_CHARS = 50_000
+TOO_LONG_CATEGORY = "too_long"
 
 
 def _windows(items, size: int, overlap: int) -> list:
@@ -85,6 +100,10 @@ class TextSafetyTool:
         self.threshold_severe = threshold_severe
         self._model = model
         self._load_error: Optional[str] = None
+        # Detoxify's fast tokenizer is not safe to call from several threads
+        # at once (the gate classifies off the event loop), so classification
+        # is serialized.
+        self._lock = threading.Lock()
 
     # ------------------------------------------------------------------ model
     @property
@@ -147,28 +166,87 @@ class TextSafetyTool:
             chunks (int: how many windows were classified).
 
         Long text is classified in overlapping windows (see ``chunks``); each
-        category's score is its highest score over all windows.
+        category's score is its highest score over all windows. Text that
+        would need more than ``MAX_WINDOWS`` windows, or has more than
+        ``MAX_CHARS`` characters, is not classified and is reported as unsafe
+        with risk category ``too_long``.
 
         ``checked`` is False when the classifier could not be loaded; callers
         decide whether to fail open or closed. Errors raised while classifying
         propagate to the caller.
         """
-        if not text or not text.strip():
-            return self._result(True, "none", 0.0, {}, checked=True)
+        return self.check_many([text])[0]
+
+    def check_many(self, texts: Sequence[str]) -> List[dict]:
+        """Classify several texts; return one ``check`` result per text.
+
+        All windows of all texts are classified in batched ``predict`` calls
+        of at most ``MAX_WINDOWS`` windows each (one call for a single text),
+        instead of one call per window.
+        """
+        results: List[Optional[dict]] = [
+            None if text and text.strip()
+            else self._result(True, "none", 0.0, {}, checked=True)
+            for text in texts
+        ]
+        if all(r is not None for r in results):
+            return results
 
         model = self.model
         if model is None:
-            return self._result(
-                True, "none", 0.0, {}, checked=False, error=self._load_error
-            )
+            return [
+                r or self._result(
+                    True, "none", 0.0, {}, checked=False, error=self._load_error
+                )
+                for r in results
+            ]
 
-        pieces = self.chunks(text)
-        scores: dict = {}
-        for piece in pieces:
-            raw: Mapping[str, Any] = model.predict(piece)
-            for label, value in raw.items():
-                scores[label] = max(scores.get(label, 0.0), float(value))
+        with self._lock:
+            pending = []  # (text index, windows)
+            for i, text in enumerate(texts):
+                if results[i] is not None:
+                    continue
+                pieces = None if len(text) > MAX_CHARS else self.chunks(text)
+                if pieces is None or len(pieces) > MAX_WINDOWS:
+                    # Not classified (fail closed): too long to screen.
+                    results[i] = self._result(
+                        False, TOO_LONG_CATEGORY, 0.0, {}, checked=True
+                    )
+                else:
+                    pending.append((i, pieces))
 
+            flat = [(i, piece) for i, pieces in pending for piece in pieces]
+            scores = {i: {} for i, _ in pending}
+            for start in range(0, len(flat), MAX_WINDOWS):
+                batch = flat[start:start + MAX_WINDOWS]
+                for (i, _), raw in zip(batch, self._predict(model, [p for _, p in batch])):
+                    for label, value in raw.items():
+                        scores[i][label] = max(scores[i].get(label, 0.0), value)
+
+        for i, pieces in pending:
+            results[i] = self._decide(scores[i], chunks=len(pieces))
+        return results
+
+    @staticmethod
+    def _predict(model, pieces: List[str]) -> List[dict]:
+        """Run one batched ``model.predict(pieces)``; return scores per piece.
+
+        Detoxify returns ``{label: [score per input]}`` for a list input.
+        """
+        raw = model.predict(list(pieces))
+        per_piece = [{} for _ in pieces]
+        for label, values in raw.items():
+            values = list(values)
+            if len(values) != len(pieces):
+                raise ValueError(
+                    f"classifier returned {len(values)} scores for {len(pieces)} inputs"
+                )
+            for scores, value in zip(per_piece, values):
+                scores[label] = float(value)
+        return per_piece
+
+    def _decide(self, scores: dict, chunks: int) -> dict:
+        """Turn per-category scores into a ``check`` result."""
         is_safe = True
         risk_category = "none"
         confidence = 0.0
@@ -187,8 +265,7 @@ class TextSafetyTool:
             confidence = max(scores.values()) if scores else 0.0
 
         return self._result(
-            is_safe, risk_category, confidence, scores, checked=True,
-            chunks=len(pieces),
+            is_safe, risk_category, confidence, scores, checked=True, chunks=chunks,
         )
 
     @staticmethod

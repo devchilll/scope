@@ -62,7 +62,8 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 - ✅ Output format validation
 - ✅ A failed image check returns an unknown result (`checked: false`), never "safe"
 - ✅ TextSafetyTool: safe / toxic / severe-toxicity / threshold / empty input / model unavailable /
-  long text classified in overlapping windows, max score per category
+  long text classified in overlapping windows in one batched call, max score per category /
+  length cap (`too_long`, not classified) / `check_many` batches
   (`scope/safety/tests/test_text_safety.py`, fake model - no download)
 
 ### Pre-model safety gate (`tests/test_callbacks.py`)
@@ -74,6 +75,13 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 - ✅ Blocked hashes come from the refusal events' `custom_metadata`; wiping the state copy (`state_delta`, state-only event) doesn't bring the text back
 - ✅ A client-supplied `temp:scope_safety_gate_decision` can't make a toxic message pass
 - ✅ Screening error → request refused, text withheld from later turns
+- ✅ Every other text turn of the request (any role) screened once per process and withheld when flagged; a flagged model reply is withheld, not refused; history logged as `history_check`
+- ✅ Refusal lost to a cancelled invocation (before screening, or while the refusal is written; with and without a restart) → text still withheld next turn (end-to-end)
+- ✅ Client-written session `events` are screened and withheld (end-to-end)
+- ✅ Exception anywhere in the gate (including a lone-surrogate message) → refused, hash recorded
+- ✅ Message over the length cap → refused unclassified (`too_long`)
+- ✅ Classification runs off the event loop thread
+- ✅ Audit-logging failure (including logger construction) doesn't change the decision
 - ✅ `scope.pre_model_safety_gate` span with blocked / max-score attributes
 - ✅ Model unavailable → logged, fails open to Layer 2b
 - ✅ `GOOGLE_SAFETY_USE_ML_MODELS=false` → classifier skipped (logged), in the callback and the `safety_check_layer1` tool

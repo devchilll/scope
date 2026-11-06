@@ -5,16 +5,38 @@ Uses an injected fake model so no network / model download is required.
 
 import pytest
 
-from scope.safety.text import TextSafetyTool, MODEL_NAME
+from scope.safety.text import (
+    TextSafetyTool, MODEL_NAME, MAX_CHARS, MAX_WINDOWS, TOO_LONG_CATEGORY,
+)
 
 
-class FakeModel:
-    def __init__(self, scores):
-        self.scores = scores
+class BatchModel:
+    """Base fake classifier with Detoxify's batch interface.
+
+    ``predict(list)`` returns ``{label: [score per text]}``. Subclasses score
+    one text in ``_score``. Records every text (``calls``) and every
+    ``predict`` call (``batches``).
+    """
+
+    def __init__(self):
         self.calls = []
+        self.batches = []
 
-    def predict(self, text):
-        self.calls.append(text)
+    def predict(self, texts):
+        assert isinstance(texts, list), "the tool always passes a batch"
+        self.batches.append(list(texts))
+        self.calls.extend(texts)
+        scored = [self._score(t) for t in texts]
+        labels = {label for s in scored for label in s}
+        return {label: [s.get(label, 0.0) for s in scored] for label in labels}
+
+
+class FakeModel(BatchModel):
+    def __init__(self, scores):
+        super().__init__()
+        self.scores = scores
+
+    def _score(self, text):
         return self.scores
 
 
@@ -71,19 +93,15 @@ class TestTextSafetyTool:
         assert tool.available is False
 
 
-class SubstringModel:
+class SubstringModel(BatchModel):
     """Fake classifier: TOXIC if the part of the text it reads contains
     ``stupid idiot``, else SAFE. Like toxic-bert it truncates its input
     (here to the first 500 characters). Records every input."""
 
-    def __init__(self):
-        self.calls = []
-
     def _read(self, text):
         return text[:500]
 
-    def predict(self, text):
-        self.calls.append(text)
+    def _score(self, text):
         return TOXIC if "stupid idiot" in self._read(text) else SAFE
 
 
@@ -125,18 +143,19 @@ class TestLongTextChunking:
 
     def test_toxic_tail_after_long_prefix_is_caught_by_characters(self):
         model = SubstringModel()  # no tokenizer: character windows
-        text = BENIGN * 200 + TAIL  # ~10k characters
+        text = BENIGN * 40 + TAIL  # ~2k characters
         result = TextSafetyTool(threshold_high=0.8, model=model).check(text)
         assert result["is_safe"] is False
         assert result["risk_category"] == "insult"
         assert result["chunks"] == len(model.calls) > 1
+        assert len(model.batches) == 1  # all windows in one predict call
         assert all(len(c) <= 500 for c in model.calls)
         # Every character is in at least one window.
         assert model.calls[0] == text[:500] and text.endswith(model.calls[-1])
 
     def test_toxic_tail_after_long_prefix_is_caught_by_tokens(self):
         model = TokenizingModel()
-        text = BENIGN * 200 + TAIL  # ~1600 "tokens"
+        text = BENIGN * 200 + TAIL  # ~1600 "tokens", 5 windows
         result = TextSafetyTool(threshold_high=0.8, model=model).check(text)
         assert result["is_safe"] is False
         assert len(model.calls) > 1
@@ -149,15 +168,62 @@ class TestLongTextChunking:
         assert TextSafetyTool(threshold_high=0.8, model=model).check(text)["is_safe"] is False
 
     def test_scores_are_max_per_category_over_windows(self):
-        class Alternating:
-            def __init__(self):
-                self.n = 0
-
-            def predict(self, text):
-                self.n += 1
-                return {"toxicity": 0.9 if self.n == 1 else 0.1,
-                        "insult": 0.1 if self.n == 1 else 0.5}
+        class Alternating(BatchModel):
+            def _score(self, text):
+                first = len(self.calls) == 0 or text == self.calls[0]
+                return {"toxicity": 0.9 if first else 0.1,
+                        "insult": 0.1 if first else 0.5}
 
         result = TextSafetyTool(threshold_high=0.95, model=Alternating()).check("z" * 1200)
         assert result["scores"] == {"toxicity": 0.9, "insult": 0.5}
         assert result["is_safe"] is True
+
+
+class TestLengthCap:
+    """Text needing more than MAX_WINDOWS windows is refused unclassified."""
+
+    def test_text_over_window_cap_is_too_long_and_not_classified(self):
+        model = TokenizingModel()
+        step = 400 - 100
+        words = 400 + MAX_WINDOWS * step  # needs MAX_WINDOWS + 1 windows
+        result = TextSafetyTool(threshold_high=0.8, model=model).check("ok " * words)
+        assert result["is_safe"] is False
+        assert result["checked"] is True
+        assert result["risk_category"] == TOO_LONG_CATEGORY
+        assert model.calls == []
+
+    def test_text_at_window_cap_is_classified_in_one_call(self):
+        model = TokenizingModel()
+        words = 400 + (MAX_WINDOWS - 1) * 300  # exactly MAX_WINDOWS windows
+        result = TextSafetyTool(threshold_high=0.8, model=model).check("ok " * words)
+        assert result["is_safe"] is True
+        assert result["chunks"] == MAX_WINDOWS
+        assert len(model.batches) == 1
+
+    def test_text_over_char_cap_is_not_tokenized(self):
+        model = TokenizingModel()
+        model.tokenizer.tokenize = None  # would raise if called
+        result = TextSafetyTool(model=model).check("x" * (MAX_CHARS + 1))
+        assert result["risk_category"] == TOO_LONG_CATEGORY
+        assert model.calls == []
+
+
+class TestCheckMany:
+    def test_one_result_per_text_in_batched_calls(self):
+        model = SubstringModel()
+        tool = TextSafetyTool(threshold_high=0.8, model=model)
+        results = tool.check_many(["hello", "", "you stupid idiot", "x" * (MAX_CHARS + 1)])
+        assert [r["is_safe"] for r in results] == [True, True, False, False]
+        assert results[3]["risk_category"] == TOO_LONG_CATEGORY
+        assert model.batches == [["hello", "you stupid idiot"]]
+
+    def test_batches_hold_at_most_max_windows(self):
+        model = SubstringModel()
+        texts = [f"text {i}" for i in range(MAX_WINDOWS * 2 + 1)]
+        TextSafetyTool(model=model).check_many(texts)
+        assert [len(b) for b in model.batches] == [MAX_WINDOWS, MAX_WINDOWS, 1]
+
+    def test_unavailable_model_reports_every_text_unchecked(self):
+        tool = TextSafetyTool()
+        tool._load_error = "boom"
+        assert [r["checked"] for r in tool.check_many(["a", "b"])] == [False, False]
