@@ -177,8 +177,19 @@ def after_model_callback(
     callback_context: CallbackContext,
     llm_response: LlmResponse,
 ) -> LlmResponse:
-    """Runs after the LLM generates a response; logs it for the audit trail."""
+    """Runs after the LLM generates a response; logs it for the audit trail.
+
+    Records the response text (truncated to 500 chars) and the names of any
+    tools the model asked to call.
+    """
     audit = get_audit_logger()
+
+    content = getattr(llm_response, "content", None)
+    parts = (getattr(content, "parts", None) or []) if content else []
+    text = "".join(p.text for p in parts if getattr(p, "text", None))
+    function_calls = [
+        p.function_call.name for p in parts if getattr(p, "function_call", None)
+    ]
 
     audit.log_event(
         event_type=AuditEventType.USER_QUERY,
@@ -187,8 +198,95 @@ def after_model_callback(
         details={
             "model": Config().agent_settings.model,
             "response_received": llm_response is not None,
+            "text": text[:500],  # Truncate for privacy / log size
+            "function_calls": function_calls,
         },
     )
 
     logger.info("[SCOPE After LLM] Response logged")
     return llm_response
+
+
+# --- Tool-call audit trail ---------------------------------------------------
+
+# Argument names whose values are never copied into the audit trail.
+_SENSITIVE_ARG_MARKERS = ("password", "secret", "token", "api_key", "ssn", "card")
+_MAX_LOGGED_CHARS = 200
+
+# Tool responses that start with one of these are error / denial messages.
+_TOOL_ERROR_PREFIXES = ("Error", "❌", "⚠️ Failed")
+
+
+def _summarize_tool_args(args: Optional[dict]) -> dict:
+    """Copy tool arguments for the audit log without dumping them wholesale.
+
+    Values of sensitive-looking keys are redacted, long strings are truncated,
+    and non-scalar values are replaced by their type name.
+    """
+    summary = {}
+    for key, value in (args or {}).items():
+        if any(marker in key.lower() for marker in _SENSITIVE_ARG_MARKERS):
+            summary[key] = "[REDACTED]"
+        elif isinstance(value, str):
+            summary[key] = (
+                value if len(value) <= _MAX_LOGGED_CHARS
+                else value[:_MAX_LOGGED_CHARS] + "..."
+            )
+        elif value is None or isinstance(value, (bool, int, float)):
+            summary[key] = value
+        else:
+            summary[key] = f"<{type(value).__name__}>"
+    return summary
+
+
+def _tool_response_error(tool_response) -> Optional[str]:
+    """Return the error text if a tool response reports a failure, else None."""
+    if isinstance(tool_response, str):
+        if tool_response.lstrip().startswith(_TOOL_ERROR_PREFIXES):
+            return tool_response.strip()[:_MAX_LOGGED_CHARS]
+    elif isinstance(tool_response, dict) and tool_response.get("error"):
+        return str(tool_response["error"])[:_MAX_LOGGED_CHARS]
+    return None
+
+
+def _current_user_role() -> str:
+    try:
+        return Config().IAM_CURRENT_USER_ROLE
+    except Exception:  # pragma: no cover - config should always load
+        return "unknown"
+
+
+def audit_tool_call_callback(tool, args: dict, tool_context, tool_response):
+    """``after_tool_callback``: write one ``tool_call`` audit event per tool run.
+
+    Logs the tool name, a redacted / truncated copy of its arguments, the user
+    ID and role, and whether the tool reported an error. The tool's response
+    body is not copied (only its length); tools log their own domain events.
+
+    Returns ``None`` so the tool's response reaches the model unchanged.
+    """
+    error = _tool_response_error(tool_response)
+    get_audit_logger().log_tool_call(
+        user_id=_current_user_id(),
+        role=_current_user_role(),
+        tool_name=getattr(tool, "name", str(tool)),
+        parameters=_summarize_tool_args(args),
+        result=None if error else f"returned {len(str(tool_response))} chars",
+        error=error,
+    )
+    return None
+
+
+def audit_tool_error_callback(tool, args: dict, tool_context, error: Exception):
+    """``on_tool_error_callback``: log a tool call that raised an exception.
+
+    Returns ``None`` so ADK still surfaces the original exception.
+    """
+    get_audit_logger().log_tool_call(
+        user_id=_current_user_id(),
+        role=_current_user_role(),
+        tool_name=getattr(tool, "name", str(tool)),
+        parameters=_summarize_tool_args(args),
+        error=f"{type(error).__name__}: {error}"[:_MAX_LOGGED_CHARS],
+    )
+    return None

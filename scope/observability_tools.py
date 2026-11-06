@@ -484,7 +484,8 @@ def view_audit_logs(limit: int = 10, event_type: Optional[str] = None) -> str:
         event_type: Optional filter by event type (e.g., "user_query", "account_access")
         
     Returns:
-        Formatted string with recent audit log entries
+        Formatted string with the newest `limit` entries of the most recent
+        daily audit log file, newest first
     """
     # Check permissions
     try:
@@ -496,43 +497,53 @@ def view_audit_logs(limit: int = 10, event_type: Optional[str] = None) -> str:
         
         # Check permissions
         from .iam import AccessControl, Permission
+        from collections import deque
+        from .logging import get_compliance_logger
         try:
             AccessControl.check_permission(current_user, Permission.VIEW_LOGS)
+            granted = True
         except Exception:
+            granted = False
+
+        # SOC2 CC6.1: record the access-control decision either way
+        get_compliance_logger().log_soc2_access_control(
+            user_id=current_user.user_id,
+            resource="audit_logs",
+            permission=Permission.VIEW_LOGS.value,
+            granted=granted
+        )
+        if not granted:
             return "❌ Permission denied: You do not have permission to view audit logs"
-        
+
         # Limit the number of entries
-        limit = min(limit, 200)
-        
+        limit = max(1, min(limit, 200))
+
         # Read the most recent log file
         log_dir = audit_logger.log_dir
         log_files = sorted(log_dir.glob("audit_*.jsonl"), reverse=True)
-        
+
         if not log_files:
             return "📋 No audit logs found"
-        
-        # Read entries from the most recent file
-        entries = []
+
+        # Keep only the last `limit` matching entries of the most recent file
+        entries = deque(maxlen=limit)
         with open(log_files[0], 'r') as f:
             for line in f:
                 if not line.strip():
                     continue
                 try:
                     entry = json.loads(line)
-                    
+
                     # Filter by event type if specified
                     if event_type and entry.get('event_type') != event_type:
                         continue
-                    
+
                     entries.append(entry)
-                    
-                    if len(entries) >= limit:
-                        break
                 except json.JSONDecodeError:
                     continue
-        
-        # Return the most recent entries (reverse order - newest first)
-        entries.reverse()
+
+        # Return the most recent entries (newest first)
+        entries = list(reversed(entries))
         
         if not entries:
             if event_type:
