@@ -1,7 +1,7 @@
 # SCOPE Test Suite
 
-Unit and integration tests for the SCOPE framework's 5 pillars: 249 tests
-collected (`uv run pytest --co -q`). Without Gemini credentials (see Notes) 245
+Unit and integration tests for the SCOPE framework's 5 pillars: 275 tests
+collected (`uv run pytest --co -q`). Without Gemini credentials (see Notes) 271
 pass and the 4 Gemini-backed tests skip.
 
 ## Test Structure
@@ -10,7 +10,7 @@ pass and the 4 Gemini-backed tests skip.
 scope/
 ├── safety/tests/
 │   ├── test_safety.py          # Image safety tool (4 tests)
-│   └── test_text_safety.py     # Text safety classifier, fake model (11 tests)
+│   └── test_text_safety.py     # Text safety classifier, fake model (17 tests)
 ├── compliance/tests/
 │   └── test_compliance.py      # Rule transformation (5 tests)
 ├── iam/tests/
@@ -25,8 +25,8 @@ scope/
 
 tests/
 ├── test_agent_integration.py   # Agent wiring, prompt, decision actions (16 tests)
-├── test_audit_logging.py       # Tool-call audit callback, daily rollover, log viewing (22 tests)
-├── test_callbacks.py           # Pre-model safety gate (before_model_callback) (35 tests)
+├── test_audit_logging.py       # Tool-call audit callback, daily rollover, log viewing (23 tests)
+├── test_callbacks.py           # Pre-model safety gate (before_model_callback) (54 tests)
 ├── test_escalation_config.py   # Escalation threshold, COMP-004 transfer guard, custom rules (17 tests)
 ├── test_integration.py         # Escalation queue on a temp DB, Gemini-backed Layer 2b / decision (9 tests, 4 need credentials)
 └── test_transfer_validation.py # transfer_money validation, atomic transfer, connection cleanup (35 tests)
@@ -69,12 +69,13 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 
 ## Test Coverage
 
-### Pillar 1: Safety (15 tests)
+### Pillar 1: Safety (21 tests)
 - ✅ ImageSafetyTool initialises (processor and model loaded)
 - ✅ ImageSafetyTool `check` returns the softmax NSFW probability and `is_safe` (score ≤ 0.5) (stub processor and model, no download)
 - ✅ A failed image check returns an unknown result (`checked: false`), never "safe"
 - ✅ TextSafetyTool: safe / toxic / severe-toxicity / threshold / empty input / model unavailable /
-  long text classified in overlapping windows, max score per category
+  long text classified in overlapping windows in one batched call, max score per category /
+  length cap (`too_long`, not classified) / `check_many` batches
   (`scope/safety/tests/test_text_safety.py`, fake model - no download)
 
 ### `safety_check_layer1` tool (3 tests, `scope/tests/test_safety_layer1.py`)
@@ -82,7 +83,7 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 - ✅ Model unavailable → `SKIPPED (model not loaded)`, logged with `success: false`, never `PASSED`
 - Fake classifier and mocked audit logger, no download (the config-disabled path is in `tests/test_callbacks.py`)
 
-### Pre-model safety gate (35 tests, `tests/test_callbacks.py`)
+### Pre-model safety gate (54 tests, `tests/test_callbacks.py`)
 - ✅ The new message is screened, whatever role the client gave it; without text, the latest user turn
 - ✅ Safe input continues to the LLM
 - ✅ Toxic input returns a refusal `LlmResponse` before the model is called
@@ -91,6 +92,13 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 - ✅ Blocked hashes come from the refusal events' `custom_metadata`; wiping the state copy (`state_delta`, state-only event) doesn't bring the text back
 - ✅ A client-supplied `temp:scope_safety_gate_decision` can't make a toxic message pass
 - ✅ Screening error → request refused, text withheld from later turns
+- ✅ Every other text turn of the request (any role) screened once per process and withheld when flagged; a flagged model reply is withheld, not refused; history logged as `history_check`
+- ✅ Refusal lost to a cancelled invocation (before screening, or while the refusal is written; with and without a restart) → text still withheld next turn (end-to-end)
+- ✅ Client-written session `events` are screened and withheld (end-to-end)
+- ✅ Exception anywhere in the gate (including a lone-surrogate message) → refused, hash recorded
+- ✅ Message over the length cap → refused unclassified (`too_long`)
+- ✅ Classification runs off the event loop thread
+- ✅ Audit-logging failure (including logger construction) doesn't change the decision
 - ✅ `scope.pre_model_safety_gate` span with blocked / max-score attributes
 - ✅ Model unavailable → logged, fails open to Layer 2b
 - ✅ `GOOGLE_SAFETY_USE_ML_MODELS=false` → classifier skipped (logged), in the callback and the `safety_check_layer1` tool
@@ -181,7 +189,7 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 - ✅ `report_fraud` ticket metadata is persisted
 - ✅ `GOOGLE_COMPLIANCE_RULES` appended to the agent instruction (unchanged when empty); rules set in the environment, including braces, appear verbatim in the system instruction produced by ADK's instruction processing
 
-### Audit logging (22 tests, `tests/test_audit_logging.py`)
+### Audit logging (23 tests, `tests/test_audit_logging.py`)
 - ✅ A `tool_call` event per tool run (checked through a scripted ADK run), with role and arguments; errors and denials marked failed; sensitive and long arguments not dumped
 - ✅ `after_model_callback` logs truncated response text and function calls
 - ✅ Audit and compliance logs roll over at midnight; separate logger instances do not cross-write

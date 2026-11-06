@@ -22,9 +22,10 @@ class FakeModel:
         self.scores = scores
         self.calls = []
 
-    def predict(self, text):
-        self.calls.append(text)
-        return self.scores
+    def predict(self, texts):
+        # Detoxify-style batch interface: a list in, a list of scores per label out
+        self.calls.extend(texts)
+        return {label: [score] * len(texts) for label, score in self.scores.items()}
 
 
 @pytest.fixture(autouse=True)

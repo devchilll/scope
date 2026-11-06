@@ -30,6 +30,8 @@ User Input: "What's my account balance?"
 │    identity attack, severe toxicity)    │
 │ - Unsafe → refusal returned, LLM never  │
 │   called, safety_block logged           │
+│ - Earlier turns screened too; blocked   │
+│   text withheld from the request        │
 └─────────────────────────────────────────┘
     ↓ (if safe)
 ┌─────────────────────────────────────────┐
@@ -238,19 +240,23 @@ A fast ML text-safety gate in front of the model, backed by LLM contextual analy
 - **Where it runs**:
   1. `scope/callbacks.py` → `fast_guardrail_callback`, registered as the agent's `before_model_callback`. Runs before **every** model call. Blocks by returning a refusal response so the model is never called.
   2. `scope/observability_tools.py` → `safety_check_layer1` tool. Re-runs the same check so the result also appears as an explicit tool step (with its output) in the ADK trace viewer, next to the Layer 2b and decision tools.
-- **Once per turn**: the new message that started the turn (ADK's `user_content`, whatever role the client gave it) is screened and logged (`user_input`, `safety_check`) once per invocation, inside a `scope.pre_model_safety_gate` OpenTelemetry span. The decision is cached under the `temp:scope_safety_gate_decision` state key (keyed by invocation id and a hash of the message) and applied to every model call of that turn, including the follow-up calls in ADK's tool loop. ADK keeps `temp:` keys for the current invocation only: it never persists them and drops them from client-supplied state, so a client cannot pre-seed the decision.
-- **Long messages**: toxic-bert reads at most 512 tokens and Detoxify silently drops the rest, so a message longer than that is split into overlapping windows of 400 tokens (100-token overlap) using the model's own tokenizer (a custom model without a tokenizer gets 500-character windows); every window is classified and each category's highest score is used. Shorter messages are classified whole, as before.
-- **Blocked messages stay out of history**: a blocked message remains in the ADK session, so the refusal carries `custom_metadata={"scope_safety_blocked": true, "input_sha256": <SHA-256 of the text>}`, which ADK stores on the refusal event. On every later model call the gate collects those hashes from the session's event log and replaces any turn whose text matches with `[message withheld by SCOPE safety gate]` before the request is sent. The event log is the record because a client can overwrite session state (ADK's `state_delta` on `/run` and `/run_sse`, `PATCH` on a session) but cannot change or remove events already in a session; the hashes are also kept in the `scope_safety_blocked_inputs` state key, which can only add to them. The model never sees the blocked text, on that turn or later ones. (If a previously blocked text is sent again and passes, for example after a threshold change, it is still withheld.)
+- **Once per turn**: the new message that started the turn (ADK's `user_content`, whatever role the client gave it; if it has no text, the latest user turn of the request) is screened and logged (`user_input`, `safety_check`) once per invocation, inside a `scope.pre_model_safety_gate` OpenTelemetry span. The decision is cached under the `temp:scope_safety_gate_decision` state key (keyed by invocation id and a hash of the message) and applied to every model call of that turn, including the follow-up calls in ADK's tool loop. ADK keeps `temp:` keys for the current invocation only: it never persists them and drops them from client-supplied state, so a client cannot pre-seed the decision.
+- **Every text turn of the request**: a model request also carries the conversation so far: earlier messages, the model's replies, and any events a client wrote into the session (ADK's create-session API accepts a list of `events`). On every model call the gate also classifies each text turn of the request, whatever its role, that this process has not classified yet. Decisions go into a bounded in-process cache (LRU, 10,000 entries) keyed by the text's SHA-256 hash, so each distinct history text is classified at most once per process (the new message itself is classified on every turn, as above). The cache lives in server memory, not in session state, so a client can neither read nor seed it; a text the cache has evicted, or forgotten across a restart, is classified again. A flagged history turn is withheld (see below) but does not refuse the new message. Each history classification is logged as a `history_check` audit event (role, hash, first 100 characters, scores, `withheld`) inside a `scope.pre_model_history_check` span, separate from the turn's `user_input` / `safety_check`. If classifying history raises, those turns are withheld from that request and classified again on the next one.
+- **Long messages**: toxic-bert reads at most 512 tokens and Detoxify silently drops the rest, so a message longer than that is split into overlapping windows of 400 tokens (100-token overlap) using the model's own tokenizer (a custom model without a tokenizer gets 500-character windows); all windows are classified in one batched call and each category's highest score is used. Shorter messages are classified whole.
+- **Length cap**: a text that would need more than 6 windows (1,900 tokens, roughly 8,000-9,000 characters of English) or has more than 50,000 characters is not classified. As a new message it is refused (fail closed) with "that message is too long for me to check", recorded like a blocked message and logged as `safety_block` with risk category `too_long`; as a history turn it is withheld. This bounds one text's classification at about 1-2 s of CPU (`MAX_WINDOWS` / `MAX_CHARS` in `scope/safety/text.py`).
+- **Off the event loop**: the callback is `async` and runs classification (and its audit writes) in a worker thread with `asyncio.to_thread`, so a long message does not stall other requests on `adk web`'s event loop. Classifier calls are serialized, because Detoxify's tokenizer is not thread-safe.
+- **Blocked text stays out of history**: a blocked message remains in the ADK session, and any one of three records keeps it out of later requests: the refusal carries `custom_metadata={"scope_safety_blocked": true, "input_sha256": <SHA-256 of the text>}`, which ADK stores on the refusal event; the hash is added to the `scope_safety_blocked_inputs` state key; and the in-process cache marks it blocked. On every model call the gate replaces each turn whose text is blocked (by one of these records, or by the history screening above) with `[message withheld by SCOPE safety gate]` before the request is sent. The event log is the durable record because a client can overwrite session state (ADK's `state_delta` on `/run` and `/run_sse`, `PATCH` on a session) but cannot change or remove events already in a session; state can only add hashes. ADK stores the new message before the gate runs, so if an invocation is cancelled (for example the client disconnects) before the refusal is written, the text is in the session with no refusal event; the in-process cache, or after a restart the history screening, still withholds it. The model never sees blocked text, on that turn or later ones. (If a previously blocked text is sent again and passes, for example after a threshold change, it is still withheld.)
 - **Thresholds**: block when any score ≥ `GOOGLE_SAFETY_THRESHOLD_HIGH` (default 0.8), or `severe_toxicity` ≥ 0.5
 - **Disable**: `GOOGLE_SAFETY_USE_ML_MODELS=false` skips the classifier in both the callback and the `safety_check_layer1` tool (each skip is written to the audit log; the tool returns a "SKIPPED" result); Layer 2b LLM checks still run
 - **If the model fails to load**: the request is logged as *unchecked* (`success: false`) and continues to the Layer 2b LLM checks (fail-open). Audit logs make this visible.
-- **If screening raises** (the classifier is loaded but errors on this message, or the gate itself fails): the request is refused like a blocked one (fail-closed), its hash is recorded the same way so the unscreened text is withheld from later turns too, and the error is logged (`safety_check` with `success: false`, plus `safety_block` with risk category `screening_error`).
+- **If anything in the gate raises** (the classifier errors on this message, or any other step of the gate fails): the request is refused like a blocked one (fail-closed), the message's hash is recorded the same way so the unscreened text is withheld from later turns too, and the error is logged (`safety_check` with `success: false`, plus `safety_block` with risk category `screening_error`). Every Python string can be hashed, including one with a lone surrogate such as `"\ud800"`, which `adk web` accepts in a JSON body. Audit-logging failures are caught inside the gate and never change its decision.
 
 ### Limits of the pre-model gate
-- **Fails open when the classifier is off or unavailable**: if the classifier cannot be loaded, or `GOOGLE_SAFETY_USE_ML_MODELS=false`, requests are not ML-screened and go to the model; only the Layer 2b LLM checks (which the agent is instructed to run) remain. Texts blocked earlier in the session stay withheld. This is different from an error while screening a message, which refuses that message (see above).
-- **Text only**: only the text parts of the new message are classified. Images, files and function-response parts are not screened.
+- **Fails open when the classifier is off or unavailable**: if the classifier cannot be loaded, or `GOOGLE_SAFETY_USE_ML_MODELS=false`, neither new messages nor history are ML-screened, and requests go to the model; only the Layer 2b LLM checks (which the agent is instructed to run) remain. Texts blocked earlier in the session stay withheld. This is different from an error while screening a message, which refuses that message (see above).
+- **Text only**: only text parts are classified (of the new message and of every turn in the request). Images, files (including `text/plain` inline data) and function-call / function-response parts are not screened.
 - **Scores cover the whole input**: the classifier scores each input (or each window of a long message) as a whole, so a short toxic sentence surrounded by enough benign text can score below the threshold.
-- **Client-written history**: the gate screens each new message. ADK's create-session API also accepts a list of `events` to start the session with; text in those events is never screened. Do not expose that endpoint (`adk web` / `adk api_server` are development servers) to untrusted clients.
+- **Model replies are screened too**: a model reply the classifier flags, or one over the length cap, is withheld from later requests like any other blocked text, so the model loses that part of its context. It never refuses a request.
+- **Cost of unseen history**: after a restart, or in a session a client started with pre-written `events`, the first model call classifies every text turn the process has not seen: at most one capped classification per distinct text, in batches, off the event loop. That work grows with the session's length, not with the cap on one message.
 
 ### Image Safety
 - **Model**: `Marqo/nsfw-image-detection-384` (Vision Transformer)
@@ -271,30 +277,32 @@ root_agent = LlmAgent(
 
 # callbacks.py - before_model_callback (simplified)
 # ADK calls it as callback(callback_context=..., llm_request=...), so the
-# parameter names must match.
-def fast_guardrail_callback(callback_context, llm_request):
-    state = callback_context.state
-    user_text = screened_text(callback_context, llm_request)  # the new message
-
-    decision = state.get("temp:scope_safety_gate_decision")
-    if not same_invocation_and_text(decision, callback_context.invocation_id, user_text):
-        # Once per turn, inside the "scope.pre_model_safety_gate" span:
-        # logs user_input, runs toxic-bert, logs safety_check (+ safety_block)
-        try:
-            decision = _screen(user_text, user_id)
-        except Exception as exc:
-            decision = _screening_failed(user_text, user_id, exc)  # refuse
-        state["temp:scope_safety_gate_decision"] = decision
-        if decision["blocked"]:
-            state["scope_safety_blocked_inputs"] = blocked + [sha256(user_text)]
-
-    if decision["blocked"]:
-        # LLM is never called; ADK stores the metadata on the refusal event
-        return LlmResponse(content=refusal, custom_metadata={
-            "scope_safety_blocked": True, "input_sha256": sha256(user_text)})
-    # hashes from the event log, plus any in state
-    redact_blocked_inputs(llm_request, blocked_input_hashes(callback_context))
-    return None                                    # Continue to LLM
+# parameter names must match. ADK awaits an async callback.
+async def fast_guardrail_callback(callback_context, llm_request):
+    try:
+        user_text = screened_text(callback_context, llm_request)  # the new message
+        decision = state.get("temp:scope_safety_gate_decision")   # same turn?
+        # Every other text turn: withheld if a refusal event / state / the
+        # in-process cache marks it blocked; classified if this process
+        # hasn't seen it yet.
+        withheld = blocked_input_hashes(callback_context)        # event log + state
+        unseen = [t for t in request_text_turns(llm_request) if not_cached(t)]
+        # In a worker thread: once per turn, inside "scope.pre_model_safety_gate",
+        # log user_input, run toxic-bert, log safety_check (+ safety_block);
+        # history turns in "scope.pre_model_history_check", logged as history_check.
+        decision, history = await asyncio.to_thread(_classify, user_text, unseen)
+        cache(decision, history)
+        if decision["blocked"]:              # flagged, or too long to classify
+            record_block(sha256(user_text))  # state + in-process cache
+            # LLM is never called; ADK stores the metadata on the refusal event
+            return LlmResponse(content=refusal, custom_metadata={
+                "scope_safety_blocked": True, "input_sha256": sha256(user_text)})
+        redact_blocked_inputs(llm_request, withheld | flagged(history))
+        return None                          # Continue to LLM
+    except Exception as exc:                 # anything in the gate: fail closed
+        _screening_failed(user_text, user_id, exc)
+        record_block(sha256(user_text))
+        return LlmResponse(content=refusal, custom_metadata={...})
 ```
 
 **Benefits:**
@@ -482,7 +490,7 @@ audit.log_event(event_type=AuditEventType.USER_QUERY, user_id="user",
 
 Events written automatically by the agent, by `action` (each event also has an `event_type`: `user_query`, `tool_call`, `account_access`, `transaction_query`, `safety_block`, `escalation_created` or `escalation_resolved`):
 
-- Callbacks: `user_input` and `safety_check` (with toxic-bert scores when the classifier ran) once per turn that has new message text, plus `safety_block` only when that turn is blocked (including screening errors); `llm_response` for every model response (response text truncated to 500 chars, plus requested tool names); and `tool_call_<tool name>` for every tool invocation (arguments redacted/truncated, user ID and role, success or error)
+- Callbacks: `user_input` and `safety_check` (with toxic-bert scores when the classifier ran) once per turn that has text to screen (the new message's text, or if it has none the latest user turn of the request, which is then logged again), plus `safety_block` only when that turn is blocked (including screening errors and messages too long to classify); `history_check` once per process for each other text turn of a request the gate classifies (earlier messages, model replies, client-written events), with `withheld: true` when it is kept from the model; `llm_response` for every model response (response text truncated to 500 chars, plus requested tool names); and `tool_call_<tool name>` for every tool invocation (arguments redacted/truncated, user ID and role, success or error)
 - Tools: `safety_layer1_check`, `safety_layer2_analysis`, `safety_decision_made`, `account_view_balance`, `query_transactions`, `list_accounts`, `transfer_completed`, `fraud_report`, `create_escalation_ticket`, `ticket_resolved`
 - Failures and denials are written with `success: false` (e.g. `view_balance_failed`, `transfer_unauthorized_source`, `resolve_ticket_unauthorized`)
 
@@ -537,7 +545,7 @@ uv run adk web
 ```
 
 **You'll see:**
-- 🔍 The pre-model safety gate as a `scope.pre_model_safety_gate` span (once per turn, under `invoke_agent <agent name>`, before the first `call_llm`), with attributes `scope.safety.checked`, `scope.safety.blocked` and `scope.safety.outcome` (`allowed`, `blocked`, `unchecked` or `skipped`); when the classifier ran (or failed to load) it also has `scope.safety.model`, `scope.safety.max_score` and `scope.safety.risk_category`, and when screening raises the span records the exception instead. ADK's own spans cover the invocation (`invocation`), the agent (`invoke_agent <agent name>`), model calls (`call_llm`, `generate_content <model>`) and tools (`execute_tool <tool name>`); callbacks get no spans of their own, so `after_model_callback` shows up only as part of `call_llm`. ADK web lists only traces that contain a `call_llm` span, so a turn the gate blocks does not appear in the Trace tab; its span still goes to any OpenTelemetry exporter you configure (e.g. `adk web --otel_to_cloud`), and the block is in the audit log as `safety_block`.
+- 🔍 The pre-model safety gate as a `scope.pre_model_safety_gate` span (once per turn, under `invoke_agent <agent name>`, before the first `call_llm`), with attributes `scope.safety.checked`, `scope.safety.blocked` and `scope.safety.outcome` (`allowed`, `blocked`, `unchecked` or `skipped`); when the classifier ran (or failed to load) it also has `scope.safety.model`, `scope.safety.max_score` and `scope.safety.risk_category`, and when screening raises the span records the exception instead. When the gate classifies history turns it adds a `scope.pre_model_history_check` span (`scope.safety.history_turns`, `scope.safety.withheld`, `scope.safety.outcome`). ADK's own spans cover the invocation (`invocation`), the agent (`invoke_agent <agent name>`), model calls (`call_llm`, `generate_content <model>`) and tools (`execute_tool <tool name>`); callbacks get no spans of their own, so `after_model_callback` shows up only as part of `call_llm`. ADK web lists only traces that contain a `call_llm` span, so a turn the gate blocks does not appear in the Trace tab; its span still goes to any OpenTelemetry exporter you configure (e.g. `adk web --otel_to_cloud`), and the block is in the audit log as `safety_block`.
 - 🛠️ Every tool call with parameters and results (`safety_check_layer1` → `safety_check_layer2` → `make_safe_and_compliant_decision` → banking tool)
 - 💬 Every LLM request and response, with timing and token usage
 
@@ -555,7 +563,7 @@ See `OBSERVABILITY.md` for the logging strategy and `ADK_TOOL_CALLING.md` for ho
 
 ## 🧪 Testing
 
-`pytest` is in the `dev` dependency group, which `uv run` installs by default. The suite collects 249 tests; without Gemini credentials 245 pass and the 4 Gemini-backed tests skip.
+`pytest` is in the `dev` dependency group, which `uv run` installs by default. The suite collects 275 tests; without Gemini credentials 271 pass and the 4 Gemini-backed tests skip.
 
 ```bash
 # Everything (Gemini-backed tests skip automatically without Gemini credentials)
@@ -574,9 +582,9 @@ uv run pytest tests/ -v
 ```
 
 **Coverage:**
-- ✅ Pre-model gate: the new message is screened whatever its role, safe passes, toxic blocked before the LLM, screened once per turn (tool loop reuses the decision), blocked text withheld from later requests (also end-to-end through ADK's runner with a fake LLM, including after the client wipes the session-state copy via `state_delta` or a state-only event), the decision cache can't be seeded by the client, a screening error refuses the request and withholds its text later, gate span attributes, fail-open when model unavailable, config disable (callback and `safety_check_layer1` tool)
+- ✅ Pre-model gate: the new message is screened whatever its role, safe passes, toxic blocked before the LLM, screened once per turn (tool loop reuses the decision), blocked text withheld from later requests (also end-to-end through ADK's runner with a fake LLM, including after the client wipes the session-state copy via `state_delta` or a state-only event), the decision cache can't be seeded by the client, every history turn screened once per process and withheld when flagged (including a refusal lost to a cancelled invocation, before or after a restart, and client-written `events`), an error anywhere in the gate (including a lone-surrogate message) refuses the request and withholds its text later, over-long messages refused unclassified, classification off the event loop, audit-logging failures don't change the decision, gate span attributes, fail-open when model unavailable, config disable (callback and `safety_check_layer1` tool)
 - ✅ Image check failure reports an unknown result, never "safe"
-- ✅ Text classifier thresholds (high / severe), empty input, unavailable model, long text classified in overlapping windows (toxic tail after a long benign prefix is caught)
+- ✅ Text classifier thresholds (high / severe), empty input, unavailable model, long text classified in overlapping windows in one batched call (toxic tail after a long benign prefix is caught), length cap (`too_long`, not classified)
 - ✅ `safety_check_layer1` tool: PASSED / FAILED / SKIPPED (model not loaded) results and audit event (fake model)
 - ✅ Compliance rule transformation
 - ✅ IAM roles, permissions, access control; prompt lists only the tools each role may use
@@ -642,7 +650,7 @@ For production banking applications:
 
 1. **Identity**: replace the `GOOGLE_IAM_CURRENT_USER_*` settings with real authentication (OAuth2/SAML) and pass the user through the session
 2. **Database**: migrate from SQLite to PostgreSQL/MySQL
-3. **Safety**: decide fail-closed vs fail-open for the pre-model gate when the classifier can't be loaded; wire `ImageSafetyTool` into the callback; don't expose ADK's development session API (which accepts client-written events) to end users
+3. **Safety**: decide fail-closed vs fail-open for the pre-model gate when the classifier can't be loaded; wire `ImageSafetyTool` into the callback; don't expose ADK's development server (`adk web` / `adk api_server`, whose session API accepts client-written events) to end users
 4. **Monitoring**: export ADK traces and JSONL logs to OpenTelemetry / Prometheus / Grafana
 5. **Scaling**: deploy with Kubernetes and load balancing
 6. **Backup**: automated backups for the banking database and audit logs
