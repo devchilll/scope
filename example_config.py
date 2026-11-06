@@ -1,6 +1,6 @@
 """Example configuration demonstrating compliance rules and escalation.
 
-This file shows how to configure the PRIME agent with custom compliance rules
+This file shows how to configure the SCOPE agent with custom compliance rules
 for different use cases.
 """
 

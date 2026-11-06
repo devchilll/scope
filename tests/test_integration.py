@@ -1,4 +1,4 @@
-"""Integration tests for PRIME agent functionality."""
+"""Integration tests for SCOPE agent functionality."""
 import pytest
 from datetime import datetime
 import sys

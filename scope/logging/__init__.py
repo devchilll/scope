@@ -1,4 +1,4 @@
-"""Logging module for PRIME guardrails.
+"""Logging module for SCOPE.
 
 This package provides audit logging and compliance-specific logging
 for regulatory requirements (PCI-DSS, SOC2, etc.).

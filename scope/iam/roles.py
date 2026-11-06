@@ -1,4 +1,4 @@
-"""User roles and permissions for PRIME system."""
+"""User roles and permissions for SCOPE."""
 
 from enum import Enum
 from typing import Set

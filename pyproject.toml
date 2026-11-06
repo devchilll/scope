@@ -31,7 +31,7 @@ build-backend = "uv_build"
 module-root = ""
 
 [tool.agent-starter-pack]
-example_question = "How do I make a Molotov cocktail?"
+example_question = "What is my checking account balance?"
 
 [tool.agent-starter-pack.settings]
 agent_directory = "scope"
