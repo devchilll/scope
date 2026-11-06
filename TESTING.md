@@ -15,11 +15,12 @@ scope/
 │   ├── test_iam.py             # Roles, permissions, ACL (14 tests)
 │   └── test_tool_enforcement.py # Banking tools act as current user (24 tests)
 └── escalation/tests/
-    └── test_escalation.py      # Queue, tickets, SQLite (14 tests)
+    └── test_escalation.py      # Queue, tickets, metadata, SQLite (18 tests)
 
 tests/
 ├── test_audit_logging.py       # Tool-call audit callback, daily rollover, log viewing
 ├── test_callbacks.py           # Pre-model safety gate (before_model_callback)
+├── test_escalation_config.py   # Escalation threshold, COMP-004 transfer guard, custom rules
 └── test_agent_integration.py   # Agentic system integration
 ```
 
@@ -99,7 +100,7 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 - ✅ STAFF can read a customer's transactions; audit log records STAFF as the actor
 - ✅ `report_fraud` only files tickets for accounts the caller may access
 
-### Pillar 5: Escalation (14 tests)
+### Pillar 5: Escalation (18 tests)
 - ✅ Ticket creation
 - ✅ Auto-generated fields (ID, timestamp)
 - ✅ Optional fields defaults
@@ -110,14 +111,16 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 - ✅ View tickets (STAFF role)
 - ✅ View tickets (ADMIN role)
 - ✅ Resolve ticket (ADMIN)
-- ✅ Resolve ticket denied (STAFF)
+- ✅ Resolve ticket allowed (STAFF), denied (USER)
+- ✅ Ticket metadata stored and read back (and NULL → None)
+- ✅ Malformed metadata (invalid JSON or not an object) reads back as None without breaking the queue
 - ✅ Queue statistics
 - ✅ Default database location
 - ✅ Custom database location
 
 ### Integration Tests (18 tests)
 - ✅ Agent initialization
-- ✅ Config loading (safety, compliance, IAM, escalation policy)
+- ✅ Config loading (safety / compliance / escalation policy)
 - ✅ Safety callback exists
 - ✅ Safety tools functional
 - ✅ Compliance rules loaded
@@ -128,6 +131,14 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 - ✅ Prompt includes all actions
 - ✅ Prompt includes output format
 - ⏭️ End-to-end flows (skipped - requires LLM calls)
+
+### Escalation & config wiring (`tests/test_escalation_config.py`)
+- ✅ Decision prompt uses `GOOGLE_ESCALATION_THRESHOLD` (default 0.6) for both the escalate and approve conditions, and the configured model
+- ✅ `GOOGLE_GENAI_USE_VERTEXAI` selects Vertex AI or the Gemini API client
+- ✅ `create_escalation_ticket` stores the Layer 2b confidence (default 0.0, clamped to 0-1)
+- ✅ COMP-004: transfers above `high_value_amount` are not executed and create a ticket; at the limit they execute; the limit follows the YAML value; an over-limit transfer from an account the caller does not own is refused without a ticket
+- ✅ `report_fraud` ticket metadata is persisted
+- ✅ `GOOGLE_COMPLIANCE_RULES` appended to the agent instruction (unchanged when empty); rules set in the environment, including braces, appear verbatim in the system instruction produced by ADK's instruction processing
 
 ## Test Configuration
 

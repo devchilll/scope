@@ -8,7 +8,6 @@ readme = "README.md"
 dependencies = [
     "google-cloud-aiplatform[adk]>=1.38.0",
     "google-adk>=0.1.0",
-    "google-generativeai",
     "pydantic-settings>=2.0.0",
     "torch==2.2.2",
     "transformers>=4.40,<5",  # transformers 5.x requires torch>=2.4; torch is pinned to 2.2.2

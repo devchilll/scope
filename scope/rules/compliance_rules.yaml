@@ -38,11 +38,10 @@ compliance_rules:
   # Rule ID: COMP-004
   - id: "COMP-004"
     category: "high_value_transactions"
-    description: "Escalate wire transfers over $10,000 to STAFF"
+    description: "Transfers above thresholds.high_value_amount (USD), including between the user's own accounts, are not executed; transfer_money creates an escalation ticket for human review instead"
     regulation: "AML (Anti-Money Laundering)"
     examples:
-      - "Transfer $50,000 → Escalate to human review"
-      - "Wire $15,000 to external account → Escalate"
+      - "Transfer $50,000 between own accounts → Not executed, escalation ticket created"
     severity: "high"
     action: "escalate"
   
@@ -82,5 +81,6 @@ compliance_rules:
 
 # Configuration for compliance thresholds
 thresholds:
-  high_value_amount: 10000.0  # USD threshold for escalation
-  require_human_review: true  # Whether to require human review for violations
+  # COMP-004: transfer_money does not execute transfers above this amount (USD);
+  # it creates an escalation ticket for human review instead
+  high_value_amount: 10000.0

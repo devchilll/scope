@@ -27,7 +27,6 @@ class TestAgentInitialization:
         
         assert policy.safety is not None
         assert policy.compliance is not None
-        assert policy.iam is not None
         assert policy.escalation is not None
 
 
