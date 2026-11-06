@@ -1,14 +1,16 @@
 """Banking tools for the SCOPE agent.
 
 These tools allow the agent to interact with the banking database
-with IAM-protected access control.
+with IAM-protected access control. Every tool runs as the configured
+current user; a `user_id` argument only names a target customer, and is
+checked against the caller's role.
 """
 
 from typing import Optional
 from datetime import datetime
 
 from ..data import Database, User as DataUser, Account, Transaction, AccountType, TransactionType
-from ..iam import User as IAMUser, UserRole, AccessControl, Permission
+from ..iam import User as IAMUser, UserRole, AccessControl, AccessDeniedException, Permission, parse_role
 from ..logging import get_audit_logger, get_compliance_logger, AuditEventType
 from ..config import Config
 
@@ -20,12 +22,31 @@ config = Config()
 
 
 def get_current_user() -> IAMUser:
-    """Get current user from config."""
+    """Get current user from config (role parsed case-insensitively)."""
     return IAMUser(
         user_id=config.IAM_CURRENT_USER_ID,
-        role=UserRole[config.IAM_CURRENT_USER_ROLE],
+        role=parse_role(config.IAM_CURRENT_USER_ROLE),
         name=config.IAM_CURRENT_USER_NAME
     )
+
+
+def check_target_user(iam_user: IAMUser, target_user_id: Optional[str]) -> None:
+    """Check that the caller may act on another user's data.
+
+    USER may only target themselves; STAFF, ADMIN and SYSTEM may target any
+    customer (the same rule the database applies to account access).
+
+    Args:
+        iam_user: Current user making the request
+        target_user_id: User the request is about (None means the caller)
+
+    Raises:
+        AccessDeniedException: If a USER targets someone else
+    """
+    if target_user_id and target_user_id != iam_user.user_id and iam_user.role == UserRole.USER:
+        raise AccessDeniedException(
+            f"User {iam_user.user_id} cannot access data for {target_user_id}"
+        )
 
 
 def get_account_balance(account_id: str) -> str:
@@ -68,7 +89,7 @@ def get_account_balance(account_id: str) -> str:
     except Exception as e:
         audit_logger.log_event(
             event_type=AuditEventType.ACCOUNT_ACCESS,
-            user_id=user_id,
+            user_id=config.IAM_CURRENT_USER_ID,
             action="view_balance_failed",
             success=False,
             error=str(e)
@@ -82,35 +103,40 @@ def get_transaction_history(account_id: str, days: int = 30, user_id: Optional[s
     Args:
         account_id: The account ID
         days: Number of days to look back (default: 30)
-        user_id: Optional user ID (defaults to current user from config)
-        
+        user_id: Optional owner of the account (STAFF/ADMIN looking up a
+            customer). The call always runs as the current user from config.
+
     Returns:
         Transaction history as a formatted string
     """
     try:
-        # Get current user from config if user_id not provided
-        if user_id is None:
-            iam_user = get_current_user()
-            user_id = iam_user.user_id
-        else:
-            iam_user = IAMUser(user_id, UserRole.USER, user_id)
-        
+        # Always act as the current user; user_id is only the target owner
+        iam_user = get_current_user()
+        check_target_user(iam_user, user_id)
+
+        # Get account (IAM-protected: USER may only access own accounts)
+        account = db.get_account(iam_user, account_id)
+        if not account:
+            return f"Account {account_id} not found."
+        if user_id and account.user_id != user_id:
+            return f"Account {account_id} does not belong to user {user_id}."
+
         # Get transactions (IAM-protected)
         transactions = db.get_account_transactions(iam_user, account_id, days=days)
-        
+
         if not transactions:
             return f"No transactions found for account {account_id} in the last {days} days."
-        
-        # Log transaction query
+
+        # Log transaction query (actor is the current user, not the target)
         audit_logger.log_transaction_query(
-            user_id=user_id,
+            user_id=iam_user.user_id,
             account_id=account_id,
             days=days
         )
-        
+
         # Log for PCI-DSS compliance
         compliance_logger.log_pci_data_access(
-            user_id=user_id,
+            user_id=iam_user.user_id,
             data_type="transaction",
             account_id=account_id,
             operation="read"
@@ -133,8 +159,9 @@ def get_transaction_history(account_id: str, days: int = 30, user_id: Optional[s
     except Exception as e:
         audit_logger.log_event(
             event_type=AuditEventType.TRANSACTION_QUERY,
-            user_id=user_id,
+            user_id=config.IAM_CURRENT_USER_ID,
             action="view_transactions_failed",
+            details={"account_id": account_id, "target_user": user_id},
             success=False,
             error=str(e)
         )
@@ -145,19 +172,21 @@ def get_user_accounts(user_id: Optional[str] = None) -> str:
     """Get all accounts for a customer.
     
     Args:
-        user_id: Optional user ID (defaults to current user from config)
-    
+        user_id: Optional customer to look up (STAFF/ADMIN only; defaults to
+            the current user from config)
+
     Returns:
         List of accounts as a formatted string
     """
     try:
-        # Get current user from config if user_id not provided
+        # Always act as the current user; user_id is only the target
         current_iam_user = get_current_user()
+        check_target_user(current_iam_user, user_id)
         is_current_user = (user_id is None)
-        
+
         if user_id is None:
             user_id = current_iam_user.user_id
-        
+
         # Get user's accounts (pass IAM user for permission check)
         accounts = db.get_user_accounts(user_id, current_iam_user)
         
@@ -192,8 +221,9 @@ def get_user_accounts(user_id: Optional[str] = None) -> str:
     except Exception as e:
         audit_logger.log_event(
             event_type=AuditEventType.ACCOUNT_ACCESS,
-            user_id=get_current_user().user_id,
+            user_id=config.IAM_CURRENT_USER_ID,
             action="list_accounts_failed",
+            details={"target_user": user_id},
             success=False,
             error=str(e)
         )
@@ -206,46 +236,55 @@ def report_fraud(account_id: str, description: str, user_id: Optional[str] = Non
     Args:
         account_id: The account ID with suspicious activity
         description: Description of the suspicious activity
-        user_id: Optional user ID (defaults to current user from config)
-        
+        user_id: Optional owner of the account (STAFF/ADMIN filing for a
+            customer). The call always runs as the current user from config.
+
     Returns:
         Confirmation message with ticket ID
     """
     try:
         from ..escalation import EscalationQueue, EscalationTicket
-        
-        # Get current user from config if user_id not provided
-        if user_id is None:
-            iam_user = get_current_user()
-            user_id = iam_user.user_id
-        
-        # Create escalation ticket
-        queue = EscalationQueue()
+
+        # Always act as the current user; user_id is only the target owner
+        iam_user = get_current_user()
+        check_target_user(iam_user, user_id)
+
+        # Ownership check (IAM-protected: USER may only report on own accounts)
+        account = db.get_account(iam_user, account_id)
+        if not account:
+            return f"Account {account_id} not found."
+        if user_id and account.user_id != user_id:
+            return f"Account {account_id} does not belong to user {user_id}."
+
+        # Create escalation ticket for the account owner, so it appears in
+        # their own escalations even when STAFF/ADMIN filed it
+        queue = EscalationQueue(db)
         ticket = EscalationTicket(
-            user_id=user_id,
+            user_id=account.user_id,
             input_text=f"Fraud report for account {account_id}: {description}",
             agent_reasoning="Fraud report - requires immediate human review",
             confidence=1.0,
             metadata={"account_id": account_id, "type": "fraud_report"}
         )
-        
+
         queue.add_ticket(ticket)
-        
-        # Log fraud report
+
+        # Log fraud report (actor is the current user, not the account owner)
         audit_logger.log_event(
             event_type=AuditEventType.ESCALATION_CREATED,
-            user_id=user_id,
+            user_id=iam_user.user_id,
             action="fraud_report",
             details={
                 "account_id": account_id,
+                "account_owner": account.user_id,
                 "ticket_id": ticket.id,
                 "description": description[:200]
             }
         )
-        
+
         # Log as SOC2 incident
         compliance_logger.log_soc2_incident(
-            user_id=user_id,
+            user_id=iam_user.user_id,
             incident_type="fraud_report",
             severity="high",
             description=f"Account {account_id}: {description[:200]}"
@@ -261,8 +300,9 @@ def report_fraud(account_id: str, description: str, user_id: Optional[str] = Non
     except Exception as e:
         audit_logger.log_event(
             event_type=AuditEventType.ESCALATION_CREATED,
-            user_id=user_id,
+            user_id=config.IAM_CURRENT_USER_ID,
             action="fraud_report_failed",
+            details={"account_id": account_id, "target_user": user_id},
             success=False,
             error=str(e)
         )
@@ -399,7 +439,7 @@ def transfer_money(from_account_id: str, to_account_id: str, amount: float, desc
     except Exception as e:
         audit_logger.log_event(
             event_type=AuditEventType.TRANSACTION_QUERY,
-            user_id=get_current_user().user_id,
+            user_id=config.IAM_CURRENT_USER_ID,
             action="transfer_failed",
             success=False,
             error=str(e)

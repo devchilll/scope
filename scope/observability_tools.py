@@ -16,7 +16,7 @@ from .logging import get_audit_logger, AuditEventType
 from .config import Config
 from .rules import SAFETY_RULES_TEXT, COMPLIANCE_RULES_TEXT
 from .escalation import EscalationQueue, EscalationTicket
-from .iam import User as IAMUser, UserRole, get_all_role_descriptions
+from .iam import User as IAMUser, UserRole, get_all_role_descriptions, parse_role
 # Initialize logger and config
 audit_logger = get_audit_logger()
 config = Config()
@@ -365,7 +365,7 @@ def list_escalation_tickets(status: Optional[str] = None) -> str:
         # Map string role from config to UserRole enum
         role_str = config.IAM_CURRENT_USER_ROLE.upper()
         try:
-            user_role = UserRole(role_str.lower())
+            user_role = parse_role(role_str)
         except ValueError:
             # Fallback to USER if invalid role configured
             user_role = UserRole.USER
@@ -376,7 +376,7 @@ def list_escalation_tickets(status: Optional[str] = None) -> str:
         # Map string role from config to UserRole enum
         role_str = config.IAM_CURRENT_USER_ROLE.upper()
         try:
-            user_role = UserRole(role_str.lower())
+            user_role = parse_role(role_str)
         except ValueError:
             # Fallback to USER if invalid role configured
             user_role = UserRole.USER
@@ -490,7 +490,7 @@ def view_audit_logs(limit: int = 10, event_type: Optional[str] = None) -> str:
     try:
         current_user = IAMUser(
             user_id=config.IAM_CURRENT_USER_ID,
-            role=UserRole[config.IAM_CURRENT_USER_ROLE],
+            role=parse_role(config.IAM_CURRENT_USER_ROLE),
             name=config.IAM_CURRENT_USER_NAME
         )
         
@@ -617,7 +617,7 @@ def resolve_escalation_ticket(ticket_id: str, resolution_note: str) -> str:
         # Check permissions
         current_user = IAMUser(
             user_id=config.IAM_CURRENT_USER_ID,
-            role=UserRole[config.IAM_CURRENT_USER_ROLE],
+            role=parse_role(config.IAM_CURRENT_USER_ROLE),
             name=config.IAM_CURRENT_USER_NAME
         )
         
