@@ -120,6 +120,7 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 - ✅ Resolve ticket (ADMIN)
 - ✅ Resolve ticket allowed (STAFF), denied (USER)
 - ✅ Ticket metadata stored and read back (and NULL → None)
+- ✅ Malformed metadata (invalid JSON or not an object) reads back as None without breaking the queue
 - ✅ Queue statistics
 - ✅ Default database location
 - ✅ Custom database location
@@ -139,12 +140,12 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 - ⏭️ End-to-end flows (skipped - requires LLM calls)
 
 ### Escalation & config wiring (`tests/test_escalation_config.py`)
-- ✅ Decision prompt uses `GOOGLE_ESCALATION_THRESHOLD` (default 0.6) and the configured model
+- ✅ Decision prompt uses `GOOGLE_ESCALATION_THRESHOLD` (default 0.6) for both the escalate and approve conditions, and the configured model
 - ✅ `GOOGLE_GENAI_USE_VERTEXAI` selects Vertex AI or the Gemini API client
 - ✅ `create_escalation_ticket` stores the Layer 2b confidence (default 0.0, clamped to 0-1)
-- ✅ COMP-004: transfers above `high_value_amount` are not executed and create a ticket; at the limit they execute; the limit follows the YAML value
+- ✅ COMP-004: transfers above `high_value_amount` are not executed and create a ticket; at the limit they execute; the limit follows the YAML value; an over-limit transfer from an account the caller does not own is refused without a ticket
 - ✅ `report_fraud` ticket metadata is persisted
-- ✅ `GOOGLE_COMPLIANCE_RULES` appended to the agent instruction (unchanged when empty)
+- ✅ `GOOGLE_COMPLIANCE_RULES` appended to the agent instruction (unchanged when empty); rules set in the environment, including braces, appear verbatim in the system instruction produced by ADK's instruction processing
 
 ## Test Configuration
 

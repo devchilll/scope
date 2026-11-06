@@ -7,11 +7,12 @@
 - **Captures**:
   - User input: the new message of each turn (once per turn), truncated to 500 chars (`before_model_callback`)
   - Layer 2a safety-check results (toxic-bert scores) and safety blocks (`before_model_callback`), including screening errors (`success: false`; the request is refused and logged as a `safety_block` with risk category `screening_error`)
-  - LLM responses: response text truncated to 500 chars plus the names of any tools the model asked to call (`after_model_callback`). The full prompt sent to the LLM is not logged.
-  - Every tool call, as a `tool_call` event: tool name, arguments (sensitive-looking keys redacted, long strings truncated), user ID and role, and success / error (`after_tool_callback`; tools that raise are logged by `on_tool_error_callback`). Error and permission-denied responses are recorded as `success: false`.
+  - LLM responses: response text truncated to 500 chars plus the names of any tools the model asked to call (`after_model_callback`). This text is not redacted, so it can include account data the model repeats from a tool response. The full prompt sent to the LLM is not logged.
+  - Every tool call, as a `tool_call` event: tool name, arguments (sensitive-looking keys redacted, long strings truncated), user ID and role, and success / error (`after_tool_callback`; tools that raise are logged by `on_tool_error_callback`). The response body is not copied into this event, only its length. A call is recorded as `success: false` when the tool raises, or when its response is a string starting (ignoring leading whitespace) with `Error`, `❌` or `⚠️ Failed`, a dict with a non-empty `error` value, or a string holding a JSON object with a non-empty `error` value (such as the fallback that `safety_check_layer2` or `make_safe_and_compliant_decision` returns when it fails). Every other response, including "not found" replies, is recorded as `success: true`.
   - Domain events written by the tools themselves: account access, transaction queries, transfers, fraud reports, escalation tickets, Layer 2b safety analyses and decisions
-  - Final agent responses only when the model calls the optional `log_agent_response` tool; this is not guaranteed for every turn
+  - A fuller copy of a response only when the model calls the optional `log_agent_response` tool: an extra `llm_response` event holding the summary (up to 200 chars) and response text (up to 2,000 chars) that the model passes to the tool; this is not guaranteed for every turn
 - **Format**: Structured JSON (one event per line)
+- **Write failures**: audit and compliance logging is fail-open: if a record cannot be written (for example, the log directory is unwritable), the failure is reported through Python's `logging` module (to stderr unless logging is configured otherwise), not to the user, and it changes neither the safety gate's decision nor any tool's result, except that `log_agent_response` returns a `⚠️ Failed to log response` message; a deleted log directory is recreated on the next write.
 
 ### 2. **Compliance Logging** (PCI-DSS, SOC2)
 - **PCI-DSS Logs**: `compliance_logs/pci_dss_YYYY-MM-DD.jsonl`

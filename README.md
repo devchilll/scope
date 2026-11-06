@@ -80,9 +80,9 @@ Response: "Your checking account acc001 has a balance of $..."
 **Key Features:**
 - 🛡️ **Pre-LLM Safety**: Every request is screened by an ML text classifier in `before_model_callback` before the model acts; flagged inputs never reach the LLM, not even as conversation history on later turns (text only, and the classifier must be enabled and loadable; see the gate's limits under Pillar 1)
 - 📜 **Policy-as-Code**: Safety and compliance rules live in YAML with IDs the agent must cite
-- 🔐 **Role-Based Access**: USER / STAFF / ADMIN / SYSTEM with role and ownership checks in the banking, escalation-queue and audit-log tools
+- 🔐 **Role-Based Access**: USER / STAFF / ADMIN / SYSTEM with role and account-ownership checks in the banking tools; role checks on viewing/resolving escalations and viewing audit logs
 - 📊 **Database Tools**: IAM-protected queries to user / account / transaction tables
-- 📝 **Audit Logging**: Every input, safety score, model response, decision, and tool call logged, plus selected PCI-DSS / SOC2 events
+- 📝 **Audit Logging**: Every input, safety score, model response, and tool call logged; Layer 2b safety decisions logged when the model calls `make_safe_and_compliant_decision`; plus selected PCI-DSS / SOC2 events
 - 🚨 **Escalation**: Uncertain cases routed to a human review queue with role-gated resolution
 
 ---
@@ -331,7 +331,7 @@ safety_rules:
 4. The decision step applies rule-specific handling (e.g. COMP-001 → `rewrite` to last-4-digits)
 
 ### Free-text rules
-`GOOGLE_COMPLIANCE_RULES` (a JSON list) adds business-specific rules without editing YAML. When `GOOGLE_COMPLIANCE_ENABLED=true` and the list is non-empty, `scope/agent.py` turns each rule into a `PRINCIPLE:` line (`transform_rules`) and `build_instruction` appends them as a numbered **COMPLIANCE PRINCIPLES** section to the agent instruction (`format_compliance_section`); with no rules the instruction is unchanged. These rules are enforced by the agent model itself: they are not included in the Layer 2b analysis prompt and have no rule IDs. `scope/compliance/examples.py` ships starter rule sets (`HEALTHCARE_RULES`, `FINANCIAL_SERVICES_RULES`, `LEGAL_SERVICES_RULES`, `RETAIL_BRAND_RULES`, `SAAS_RULES`, `EDUCATION_RULES`), and `example_config.py` has per-industry templates (rules + escalation threshold) with the matching `.env` lines.
+`GOOGLE_COMPLIANCE_RULES` (a JSON list) adds business-specific rules without editing YAML. When `GOOGLE_COMPLIANCE_ENABLED=true` and the list is non-empty, `scope/agent.py` turns each rule into a `PRINCIPLE:` line (`transform_rules`) and `build_instruction` appends them as a numbered **COMPLIANCE PRINCIPLES** section to the agent instruction (`format_compliance_section`); with no rules the instruction is unchanged. The instruction is passed to ADK as a function (an InstructionProvider), so ADK does not apply its `{state}` templating and braces in a rule are sent to the model as written. These rules are enforced by the agent model itself: they are not included in the Layer 2b analysis prompt and have no rule IDs. `scope/compliance/examples.py` ships starter rule sets (`HEALTHCARE_RULES`, `FINANCIAL_SERVICES_RULES`, `LEGAL_SERVICES_RULES`, `RETAIL_BRAND_RULES`, `SAAS_RULES`, `EDUCATION_RULES`), and `example_config.py` has per-industry templates (rules + escalation threshold) with the matching `.env` lines.
 
 ---
 
@@ -392,13 +392,13 @@ Agent tools: `get_account_balance`, `get_transaction_history`, `get_user_account
 Human-in-the-loop review queue. Tickets are stored in the `escalations` table of the banking SQLite database (`scope/data/storage/banking.db`).
 
 ### When Escalation Occurs
-- Layer 2b `confidence` below `GOOGLE_ESCALATION_THRESHOLD` (default 0.6): the value is written into the decision prompt, and the decision model chooses `escalate`
+- Layer 2b `confidence` below `GOOGLE_ESCALATION_THRESHOLD` (default 0.6): the value is written into the decision prompt, which instructs the decision model to `escalate` below it and to `approve` only when confidence is at or above it (and safety and compliance scores are at least 0.8). This is an instruction to the model, not a check in code; the chosen action is the model's judgement.
 - Ambiguous or off-topic requests, edge cases (judged by the decision model)
 - High-value transfers (COMP-004), enforced in code: `transfer_money` does not execute a transfer above `thresholds.high_value_amount` in `scope/rules/compliance_rules.yaml` (default $10,000). It creates a pending ticket (`metadata.type = "high_value_transfer"`) and moves no money; resolving the ticket does not execute the transfer.
 - Fraud reports (`report_fraud`) create a ticket (`metadata.type = "fraud_report"`)
 - Errors in the decision step fail safe to `escalate`
 
-When the agent escalates, `create_escalation_ticket(user_input, reasoning, confidence)` stores the Layer 2b confidence on the ticket, so `get_statistics()["avg_confidence"]` reflects the escalated requests.
+When the agent escalates, `create_escalation_ticket(user_input, reasoning, confidence)` stores the confidence value the agent passes (default 0.0, clamped to 0-1) on the ticket. `get_statistics()["avg_confidence"]` is the mean confidence over all tickets the caller can view, including fraud-report and high-value-transfer tickets, which are always stored with confidence 1.0.
 
 ### API
 
@@ -434,7 +434,7 @@ In the agent, STAFF/ADMIN use the `list_escalation_tickets` and `resolve_escalat
 
 ## 📊 Data Layer
 
-SQLite banking database. The read methods that take an IAM user (`get_account`, `get_user_accounts`, `get_account_transactions`, `get_escalations`, `resolve_escalation`) are IAM-protected; the `create_*` / `update_account` write helpers below are unchecked and meant for seeding or for use after a tool's own checks.
+SQLite banking database. The methods that take an IAM user (`get_account`, `get_user_accounts`, `get_account_transactions`, `get_escalations`, `resolve_escalation`) are IAM-protected; the `create_*` / `update_account` write helpers below are unchecked and meant for seeding or for use after a tool's own checks.
 
 ```python
 from scope.data import Database, User, Account, Transaction, AccountType, TransactionType
@@ -481,7 +481,7 @@ audit.log_event(event_type=AuditEventType.USER_QUERY, user_id="user",
 
 Events written automatically by the agent, by `action` (each event also has an `event_type`: `user_query`, `tool_call`, `account_access`, `transaction_query`, `safety_block`, `escalation_created` or `escalation_resolved`):
 
-- Callbacks on every turn: `user_input`, `safety_check` (with toxic-bert scores), `safety_block`, `llm_response` (response text truncated to 500 chars, plus requested tool names), and `tool_call_<tool name>` for every tool invocation (arguments redacted/truncated, user ID and role, success or error)
+- Callbacks: `user_input` and `safety_check` (with toxic-bert scores when the classifier ran) once per turn that has new message text, plus `safety_block` only when that turn is blocked (including screening errors); `llm_response` for every model response (response text truncated to 500 chars, plus requested tool names); and `tool_call_<tool name>` for every tool invocation (arguments redacted/truncated, user ID and role, success or error)
 - Tools: `safety_layer1_check`, `safety_layer2_analysis`, `safety_decision_made`, `account_view_balance`, `query_transactions`, `list_accounts`, `transfer_completed`, `fraud_report`, `create_escalation_ticket`, `ticket_resolved`
 - Failures and denials are written with `success: false` (e.g. `view_balance_failed`, `transfer_unauthorized_source`, `resolve_ticket_unauthorized`)
 
@@ -596,7 +596,7 @@ config = Config(
     SAFETY_THRESHOLD_HIGH=0.7,
     SAFETY_USE_ML_MODELS=True,
     IAM_CURRENT_USER_ROLE="STAFF",
-    ESCALATION_THRESHOLD=0.7,          # higher = more escalations
+    ESCALATION_THRESHOLD=0.7,          # decision prompt escalates below this confidence (higher = more)
 )
 policy = config.current_policy          # .safety / .compliance / .escalation
 ```
