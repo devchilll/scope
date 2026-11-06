@@ -85,7 +85,12 @@ class AuditLogger:
         else:
             log_dir = Path(log_dir)
         
-        log_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            # Fail open like every write: append_daily_jsonl retries the
+            # mkdir and reports a failure on each write.
+            logger.exception("Failed to create audit log directory %s", log_dir)
         # One file per day: the dated file is resolved on every write (see
         # append_daily_jsonl), so the log rolls over at midnight.
         self.log_dir = log_dir

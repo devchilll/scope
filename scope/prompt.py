@@ -61,21 +61,21 @@ TOOL_DEFINITIONS = {
     # Universal tools - require USE_AGENT (all roles have this)
     "safety_layer1": {
         "permissions": [Permission.USE_AGENT],
-        "title": "Layer 1 Safety Check (REQUIRED FIRST - Step 1)",
+        "title": "Layer 2a ML Safety Check (REQUIRED FIRST - Step 1)",
         "tool": "safety_check_layer1(user_input)",
         "notes": ["**ALWAYS call this FIRST** for every user request", "Fast ML-based safety check"]
     },
     "safety_layer2": {
         "permissions": [Permission.USE_AGENT],
-        "title": "Layer 2 Safety & Compliance Analysis (REQUIRED SECOND - Step 2)",
+        "title": "Layer 2b LLM Safety & Compliance Analysis (REQUIRED SECOND - Step 2)",
         "tool": "safety_check_layer2(user_input)",
-        "notes": ["**ALWAYS call this SECOND** after Layer 1 passes", "Returns JSON with: safety_score, compliance_score, confidence, violated_rules, risk_factors, analysis"]
+        "notes": ["**ALWAYS call this SECOND** after the Layer 2a check passes", "Returns JSON with: safety_score, compliance_score, confidence, violated_rules, risk_factors, analysis"]
     },
     "safety_decision": {
         "permissions": [Permission.USE_AGENT],
         "title": "Make Safety Decision (REQUIRED THIRD - Step 3)",
         "tool": "make_safe_and_compliant_decision(safety_analysis)",
-        "notes": ["**ALWAYS call this THIRD** with the object from Layer 2", "Returns JSON with: action (approve/reject/rewrite/escalate), params, reasoning"]
+        "notes": ["**ALWAYS call this THIRD** with the object from Layer 2b", "Returns JSON with: action (approve/reject/rewrite/escalate), params, reasoning"]
     },
     "create_escalation": {
         "permissions": [Permission.USE_AGENT],
@@ -255,17 +255,17 @@ After completing the 3 safety checks above, handle the action:
 - Hours: {configs.bank_info.hours}
 - Address: {configs.bank_info.address}
 
-## CRITICAL: 3-LAYER SAFETY & COMPLIANCE WORKFLOW
+## CRITICAL: SAFETY & COMPLIANCE WORKFLOW (Layer 2a ML → Layer 2b LLM → Decision)
 
 **For EVERY user request, you MUST follow this exact workflow:**
 
-### Step 1: Layer 1 Safety Check (Fast ML)
+### Step 1: Layer 2a Safety Check (Fast ML)
 Call `safety_check_layer1(user_input="<user's exact message>")`
 - This is a fast ML-based check
 - If it fails, STOP and refuse the request
 - If it passes, proceed to Step 2
 
-### Step 2: Layer 2 Safety & Compliance Analysis (LLM)
+### Step 2: Layer 2b Safety & Compliance Analysis (LLM)
 Call `safety_check_layer2(user_input="<user's exact message>")`
 - This analyzes the request and returns a JSON object with safety scores
 - Parse the JSON to get: safety_score, compliance_score, confidence, violated_rules, risk_factors, analysis
@@ -315,7 +315,7 @@ Based on the `action` from Step 3:
 ## COMPLIANCE RULES (Reference):
 {COMPLIANCE_RULES_TEXT}
 
-**Note:** These rules are already loaded into Layer 2 safety check. You don't need to enforce them manually - just follow the action from Layer 2.
+**Note:** These rules are already loaded into the Layer 2b safety check. You don't need to enforce them manually - just follow the action from the decision step.
 
 ## WHAT YOU CAN DO (Using Your Tools):
 {get_tool_descriptions(configs.IAM_CURRENT_USER_ROLE)}

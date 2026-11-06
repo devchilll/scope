@@ -4,11 +4,14 @@ This module provides specialized logging for PCI-DSS, SOC2, and other
 regulatory compliance requirements.
 """
 
+import logging
 from datetime import datetime
 from typing import Optional, Dict, Any
 from pathlib import Path
 
 from .audit import append_daily_jsonl
+
+logger = logging.getLogger(__name__)
 
 
 class ComplianceLogger:
@@ -25,7 +28,12 @@ class ComplianceLogger:
         else:
             log_dir = Path(log_dir)
         
-        log_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            # Fail open like every write: append_daily_jsonl retries the
+            # mkdir and reports a failure on each write.
+            logger.exception("Failed to create compliance log directory %s", log_dir)
         self.log_dir = log_dir
 
         # Separate daily files per compliance framework. These are file-name

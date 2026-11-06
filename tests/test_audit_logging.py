@@ -161,6 +161,18 @@ class TestFailOpenWrites:
 
         assert "Failed to write log record" in caplog.text
 
+    def test_logger_construction_with_unwritable_dir_does_not_raise(self, tmp_path, caplog):
+        blocker = tmp_path / "not_a_dir"
+        blocker.write_text("")
+
+        AuditLogger(log_dir=str(blocker / "audit")).log_event(
+            audit_module.AuditEventType.USER_QUERY, "user", "x")
+        ComplianceLogger(log_dir=str(blocker / "compliance"))
+
+        assert "Failed to create audit log directory" in caplog.text
+        assert "Failed to create compliance log directory" in caplog.text
+        assert "Failed to write log record" in caplog.text
+
     def test_non_json_values_are_written_as_strings(self, tmp_path):
         when = datetime(2026, 1, 1, 12, 0, 0)
         path = audit_module.append_daily_jsonl(

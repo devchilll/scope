@@ -183,17 +183,17 @@ We can control:
 
 ## Logging Tool Calls
 
-To log tool calls, we can use callbacks or inspect the conversation history:
+SCOPE logs every tool run with ADK's tool callbacks, registered on the agent in `scope/agent.py`:
 
 ```python
-def after_model_callback(context, llm_response):
-    # Check if LLM called a tool
-    if hasattr(llm_response, 'function_call'):
-        tool_name = llm_response.function_call.name
-        tool_args = llm_response.function_call.args
-        logger.info(f"Tool called: {tool_name}({tool_args})")
-    return llm_response
+root_agent = LlmAgent(
+    ...,
+    after_tool_callback=audit_tool_call_callback,    # one `tool_call` audit event per tool run
+    on_tool_error_callback=audit_tool_error_callback, # logs tools that raised
+)
 ```
+
+ADK calls these with keyword arguments (`tool=`, `args=`, `tool_context=`, and `tool_response=` or `error=`). Both return `None`, so the tool's result or exception is passed through unchanged. See `scope/callbacks.py`.
 
 ## Summary
 

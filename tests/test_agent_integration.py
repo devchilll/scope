@@ -1,8 +1,8 @@
 """Integration tests for the SCOPE agentic system.
 
 These tests verify the end-to-end functionality of the agent including:
-- Safety checks (Layer 2)
-- LLM reasoning (Layer 1)
+- Safety checks (Layer 2a ML gate, Layer 2b LLM contextual safety)
+- LLM reasoning (decision step)
 - Compliance enforcement
 - Escalation triggers
 """
@@ -31,7 +31,7 @@ class TestAgentInitialization:
 
 
 class TestSafetyLayer:
-    """Test Layer 2 safety checks."""
+    """Test the safety layers (2a ML gate, 2b LLM contextual safety)."""
     
     def test_safe_input_passes(self):
         """Test that safe input passes safety checks."""

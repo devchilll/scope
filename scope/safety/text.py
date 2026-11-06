@@ -9,12 +9,21 @@ A thin wrapper around ``unitary/toxic-bert`` (via Detoxify) that is shared by:
 
 The classifier is loaded lazily on first use so importing this module (and the
 callback) stays cheap, and so unit tests can inject a fake model.
+
+toxic-bert reads at most 512 tokens, and Detoxify silently truncates longer
+input. So that the whole message is classified, longer text is split into
+overlapping windows that each fit, all windows are classified in one batched
+call, and the highest score per category is used. Text that would need more
+than ``MAX_WINDOWS`` windows (or is longer than ``MAX_CHARS`` characters) is
+not classified: it is reported as unsafe with risk category ``too_long``
+(fail closed), which bounds the CPU time one message can cost.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any, Mapping, Optional
+import threading
+from typing import Any, List, Optional, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +38,45 @@ _RISK_LABELS = (
     "obscene",
     "toxicity",
 )
+
+# toxic-bert (bert-base-uncased) reads at most 512 tokens including [CLS] and
+# [SEP]; Detoxify truncates anything after that. Text longer than
+# _MAX_TOKENS is classified in windows of _CHUNK_TOKENS tokens that overlap by
+# _CHUNK_OVERLAP_TOKENS, so a phrase that straddles a window boundary is
+# still seen whole by one window. The window is kept well under the limit
+# because turning tokens back into text and re-tokenizing it can shift the
+# count slightly.
+_MAX_TOKENS = 510
+_CHUNK_TOKENS = 400
+_CHUNK_OVERLAP_TOKENS = 100
+
+# Fallback for a model without an accessible tokenizer: split by characters.
+# BERT's WordPiece yields at most about one token per character for most
+# scripts, so 500-character windows stay under 512 tokens.
+_CHUNK_CHARS = 500
+_CHUNK_OVERLAP_CHARS = 100
+
+# Upper bound on the work one text can cost. A window takes roughly 0.2-0.35 s
+# of CPU with toxic-bert, so 6 windows (1,900 tokens, roughly 8,000-9,000
+# characters of English) keep the worst case near 1-2 s (measured 1.3-2.1 s
+# on a laptop CPU). Longer text is reported as unsafe (``too_long``) without
+# being classified. ``MAX_CHARS`` rejects very long input before it is
+# tokenized; it never binds first for ordinary text (English averages well
+# under 6 characters per BERT token).
+MAX_WINDOWS = 6
+MAX_CHARS = 50_000
+TOO_LONG_CATEGORY = "too_long"
+
+
+def _windows(items, size: int, overlap: int) -> list:
+    """Split a sequence into windows of ``size`` that overlap by ``overlap``."""
+    step = size - overlap
+    windows = []
+    for start in range(0, len(items), step):
+        windows.append(items[start:start + size])
+        if start + size >= len(items):
+            break
+    return windows
 
 
 class TextSafetyTool:
@@ -52,6 +100,10 @@ class TextSafetyTool:
         self.threshold_severe = threshold_severe
         self._model = model
         self._load_error: Optional[str] = None
+        # Detoxify's fast tokenizer is not safe to call from several threads
+        # at once (the gate classifies off the event loop), so classification
+        # is serialized.
+        self._lock = threading.Lock()
 
     # ------------------------------------------------------------------ model
     @property
@@ -82,28 +134,119 @@ class TextSafetyTool:
         return self._load_error
 
     # ------------------------------------------------------------------ check
+    def chunks(self, text: str) -> list:
+        """Split ``text`` into pieces the classifier reads in full.
+
+        Text that fits in the model's 512-token input is returned as is.
+        Longer text is split into overlapping windows: by tokens when the
+        model exposes its tokenizer (Detoxify does), otherwise by characters.
+        """
+        model = self.model
+        tokenizer = getattr(model, "tokenizer", None)
+        if tokenizer is not None and hasattr(tokenizer, "tokenize") and hasattr(
+            tokenizer, "convert_tokens_to_string"
+        ):
+            tokens = tokenizer.tokenize(text)
+            if len(tokens) <= _MAX_TOKENS:
+                return [text]
+            return [
+                tokenizer.convert_tokens_to_string(window)
+                for window in _windows(tokens, _CHUNK_TOKENS, _CHUNK_OVERLAP_TOKENS)
+            ]
+        if len(text) <= _CHUNK_CHARS:
+            return [text]
+        return _windows(text, _CHUNK_CHARS, _CHUNK_OVERLAP_CHARS)
+
     def check(self, text: str) -> dict:
         """Classify ``text``.
 
         Returns a dict with:
             is_safe (bool), risk_category (str), confidence (float),
-            scores (dict[str, float]), model (str), checked (bool).
+            scores (dict[str, float]), model (str), checked (bool),
+            chunks (int: how many windows were classified).
 
-        ``checked`` is False when the classifier could not run; callers decide
-        whether to fail open or closed.
+        Long text is classified in overlapping windows (see ``chunks``); each
+        category's score is its highest score over all windows. Text that
+        would need more than ``MAX_WINDOWS`` windows, or has more than
+        ``MAX_CHARS`` characters, is not classified and is reported as unsafe
+        with risk category ``too_long``.
+
+        ``checked`` is False when the classifier could not be loaded; callers
+        decide whether to fail open or closed. Errors raised while classifying
+        propagate to the caller.
         """
-        if not text or not text.strip():
-            return self._result(True, "none", 0.0, {}, checked=True)
+        return self.check_many([text])[0]
+
+    def check_many(self, texts: Sequence[str]) -> List[dict]:
+        """Classify several texts; return one ``check`` result per text.
+
+        All windows of all texts are classified in batched ``predict`` calls
+        of at most ``MAX_WINDOWS`` windows each (one call for a single text),
+        instead of one call per window.
+        """
+        results: List[Optional[dict]] = [
+            None if text and text.strip()
+            else self._result(True, "none", 0.0, {}, checked=True)
+            for text in texts
+        ]
+        if all(r is not None for r in results):
+            return results
 
         model = self.model
         if model is None:
-            return self._result(
-                True, "none", 0.0, {}, checked=False, error=self._load_error
-            )
+            return [
+                r or self._result(
+                    True, "none", 0.0, {}, checked=False, error=self._load_error
+                )
+                for r in results
+            ]
 
-        raw: Mapping[str, Any] = model.predict(text)
-        scores = {k: float(v) for k, v in raw.items()}
+        with self._lock:
+            pending = []  # (text index, windows)
+            for i, text in enumerate(texts):
+                if results[i] is not None:
+                    continue
+                pieces = None if len(text) > MAX_CHARS else self.chunks(text)
+                if pieces is None or len(pieces) > MAX_WINDOWS:
+                    # Not classified (fail closed): too long to screen.
+                    results[i] = self._result(
+                        False, TOO_LONG_CATEGORY, 0.0, {}, checked=True
+                    )
+                else:
+                    pending.append((i, pieces))
 
+            flat = [(i, piece) for i, pieces in pending for piece in pieces]
+            scores = {i: {} for i, _ in pending}
+            for start in range(0, len(flat), MAX_WINDOWS):
+                batch = flat[start:start + MAX_WINDOWS]
+                for (i, _), raw in zip(batch, self._predict(model, [p for _, p in batch])):
+                    for label, value in raw.items():
+                        scores[i][label] = max(scores[i].get(label, 0.0), value)
+
+        for i, pieces in pending:
+            results[i] = self._decide(scores[i], chunks=len(pieces))
+        return results
+
+    @staticmethod
+    def _predict(model, pieces: List[str]) -> List[dict]:
+        """Run one batched ``model.predict(pieces)``; return scores per piece.
+
+        Detoxify returns ``{label: [score per input]}`` for a list input.
+        """
+        raw = model.predict(list(pieces))
+        per_piece = [{} for _ in pieces]
+        for label, values in raw.items():
+            values = list(values)
+            if len(values) != len(pieces):
+                raise ValueError(
+                    f"classifier returned {len(values)} scores for {len(pieces)} inputs"
+                )
+            for scores, value in zip(per_piece, values):
+                scores[label] = float(value)
+        return per_piece
+
+    def _decide(self, scores: dict, chunks: int) -> dict:
+        """Turn per-category scores into a ``check`` result."""
         is_safe = True
         risk_category = "none"
         confidence = 0.0
@@ -121,7 +264,9 @@ class TextSafetyTool:
         if is_safe:
             confidence = max(scores.values()) if scores else 0.0
 
-        return self._result(is_safe, risk_category, confidence, scores, checked=True)
+        return self._result(
+            is_safe, risk_category, confidence, scores, checked=True, chunks=chunks,
+        )
 
     @staticmethod
     def _result(
@@ -132,6 +277,7 @@ class TextSafetyTool:
         *,
         checked: bool,
         error: Optional[str] = None,
+        chunks: int = 0,
     ) -> dict:
         result = {
             "is_safe": is_safe,
@@ -140,6 +286,7 @@ class TextSafetyTool:
             "scores": scores,
             "model": MODEL_NAME,
             "checked": checked,
+            "chunks": chunks,
         }
         if error:
             result["error"] = error

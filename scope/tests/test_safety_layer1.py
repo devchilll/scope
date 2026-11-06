@@ -7,7 +7,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"
 from scope.observability_tools import safety_check_layer1
 
 def test_safety_check():
-    print("Testing Safety Layer 1 (Toxic-BERT)...")
+    print("Testing Safety Layer 2a (Toxic-BERT)...")
     
     # Test Case 1: Safe Input
     safe_input = "Hello, I would like to check my account balance."
