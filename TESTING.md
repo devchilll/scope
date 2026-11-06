@@ -150,9 +150,10 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 
 ### Transfers (`tests/test_transfer_validation.py`)
 - ✅ Same-account transfers rejected (tool and database), no balance change
-- ✅ NaN / ±inf, non-numeric (`"50"`, `None`, `True`), zero / negative and sub-cent (> 2 decimal places) amounts rejected before any database access
+- ✅ NaN / ±inf, an int too large for a float (`10**400`), non-numeric (`"50"`, `None`, `True`), zero / negative and sub-cent (> 2 decimal places) amounts rejected before any database access
+- ✅ `Database.transfer_funds` called directly rejects the same invalid amounts (e.g. `0.005`, `0.025`, NaN) with `ValueError`; nothing is written
 - ✅ A failed query closes its connection (no "database is locked" on the next call)
-- ✅ Debit, credit and transaction rows roll back together on failure; unknown destination does not debit; funds re-checked inside the transaction
+- ✅ Debit, credit and transaction rows roll back together on failure; unknown destination does not debit; funds re-checked inside the transaction, so a transfer that passes `transfer_money`'s pre-check on an out-of-date (higher) balance is refused with nothing written
 - ✅ Balances rounded to cents (ten $0.10 transfers leave exact balances)
 
 ## Test Configuration

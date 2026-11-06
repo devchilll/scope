@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any, Tuple, TYPE_CHECKING
 from datetime import datetime, timedelta
 import uuid
+from decimal import Decimal
 
 from .models import User, Account, Transaction, AccountType, TransactionType
 from ..iam import User as IAMUser, AccessControl, Permission, AccessDeniedException
@@ -33,6 +34,37 @@ def _parse_metadata(raw: Optional[str]) -> Optional[Dict[str, Any]]:
     except (TypeError, ValueError):
         return None
     return value if isinstance(value, dict) else None
+
+
+def validate_transfer_amount(amount: Any) -> float:
+    """Check that a transfer amount is a positive, finite number in whole cents.
+
+    Shared by the ``transfer_money`` tool and ``Database.transfer_funds``.
+    Amounts with more than 2 decimal places are rejected, not rounded.
+
+    Args:
+        amount: The requested amount (an int or float; bool is not accepted)
+
+    Returns:
+        The amount as a float
+
+    Raises:
+        ValueError: The amount is not a number, not finite (including an int
+            too large for a float), not positive, or not in whole cents
+    """
+    if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+        raise ValueError("Transfer amount must be a number.")
+    try:
+        finite = math.isfinite(amount)
+    except OverflowError:  # an int too large to convert to a float
+        finite = False
+    if not finite:
+        raise ValueError("Transfer amount must be a finite number.")
+    if amount <= 0:
+        raise ValueError("Transfer amount must be greater than zero.")
+    if Decimal(str(amount)).as_tuple().exponent < -2:
+        raise ValueError("Transfer amount cannot have more than 2 decimal places.")
+    return float(amount)
 
 
 class Database:
@@ -390,15 +422,17 @@ class Database:
 
         The debit, the credit and the given transaction rows are committed
         together or not at all, so a failure part-way can neither lose nor
-        create money. The debit is conditional (``balance >= amount``) and
-        both updates are relative to the stored balance, so the funds check
-        and the write cannot be split by a concurrent transfer. Resulting
-        balances are rounded to cents.
+        create money. The amount is checked with ``validate_transfer_amount``
+        (positive, finite, whole cents) before the database is opened. The
+        debit is conditional (``balance >= amount``) and both updates are
+        relative to the stored balance, so the funds check and the write
+        cannot be split by a concurrent transfer. Resulting balances are
+        rounded to cents.
 
         Args:
             from_account_id: Account to debit
             to_account_id: Account to credit (must differ from the source)
-            amount: Positive, finite amount
+            amount: Positive, finite amount with at most 2 decimal places
             transactions: Transaction rows to record with the transfer
 
         Returns:
@@ -410,10 +444,7 @@ class Database:
         """
         if from_account_id == to_account_id:
             raise ValueError("Source and destination accounts must be different")
-        if isinstance(amount, bool) or not isinstance(amount, (int, float)):
-            raise ValueError("Transfer amount must be a number")
-        if not math.isfinite(amount) or amount <= 0:
-            raise ValueError("Transfer amount must be a positive, finite number")
+        amount = validate_transfer_amount(amount)
 
         with closing(self._get_connection()) as conn:
             try:

@@ -59,7 +59,9 @@ used by `seed_database.py`.
 
 `transfer_money` rejects same-account transfers and amounts that are not
 positive, finite numbers with at most 2 decimal places (they are rejected, not
-rounded) before touching the database. `Database.transfer_funds` then applies
+rounded) before touching the database. `Database.transfer_funds` applies the
+same amount check itself (`validate_transfer_amount`, raising `ValueError`), so
+direct calls are covered too, then applies
 the debit, the credit and both `transactions` rows in a single SQLite
 transaction (`BEGIN IMMEDIATE`): the debit only succeeds if the stored balance
 still covers the amount, both balances are rounded to cents (`ROUND(..., 2)`),
