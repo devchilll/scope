@@ -6,12 +6,11 @@ current user; a `user_id` argument only names a target customer, and is
 checked against the caller's role.
 """
 
-import math
-from decimal import Decimal
 from typing import Optional
 from datetime import datetime
 
 from ..data import Database, User as DataUser, Account, Transaction, AccountType, TransactionType
+from .database import validate_transfer_amount
 from ..iam import User as IAMUser, UserRole, AccessControl, AccessDeniedException, Permission, parse_role
 from ..logging import get_audit_logger, get_compliance_logger, AuditEventType
 from ..config import Config
@@ -390,16 +389,12 @@ def transfer_money(from_account_id: str, to_account_id: str, amount: float, desc
         
         # Validate amount: a real number (not bool/str), finite, positive and
         # in whole cents. Amounts with more than 2 decimal places are rejected
-        # rather than silently rounded.
-        if isinstance(amount, bool) or not isinstance(amount, (int, float)):
-            return "❌ Transfer amount must be a number."
-        if not math.isfinite(amount):
-            return "❌ Transfer amount must be a finite number."
-        if amount <= 0:
-            return "❌ Transfer amount must be greater than zero."
-        if Decimal(str(amount)).as_tuple().exponent < -2:
-            return "❌ Transfer amount cannot have more than 2 decimal places."
-        amount = float(amount)
+        # rather than silently rounded. Database.transfer_funds applies the
+        # same check.
+        try:
+            amount = validate_transfer_amount(amount)
+        except ValueError as e:
+            return f"❌ {e}"
 
         # A transfer to the same account would credit money that was never debited
         if from_account_id == to_account_id:
@@ -525,10 +520,21 @@ def transfer_money(from_account_id: str, to_account_id: str, amount: float, desc
         )
         
         # Debit, credit and both transaction rows commit atomically (or not at
-        # all); the database re-checks funds under its write lock
-        from_balance, to_balance = db.transfer_funds(
-            from_account_id, to_account_id, amount, [from_txn, to_txn]
-        )
+        # all); the database re-checks funds under its write lock, so a balance
+        # that changed since it was read above refuses the transfer here
+        try:
+            from_balance, to_balance = db.transfer_funds(
+                from_account_id, to_account_id, amount, [from_txn, to_txn]
+            )
+        except ValueError as e:
+            audit_logger.log_event(
+                event_type=AuditEventType.TRANSACTION_QUERY,
+                user_id=user_id,
+                action="transfer_failed",
+                success=False,
+                error=str(e)
+            )
+            return f"❌ Transfer not executed: {e}. No money has been moved."
 
         # Log for audit
         audit_logger.log_event(
