@@ -80,22 +80,24 @@
 
 **Available today (from ADK, no SCOPE code):** ADK emits OpenTelemetry spans for each agent invocation, LLM call and tool execution. `adk web` shows them in its Trace tab, and `adk web --trace_to_cloud` exports them to Google Cloud Trace.
 
+**Available today (SCOPE):** the pre-model safety gate runs inside its own `scope.pre_model_safety_gate` span (blocked/allowed, max score, risk category).
+
 **Still to implement:** a request ID shared between spans and the JSONL audit events, finer-grained spans inside tools (IAM check, database query), and an export pipeline for production.
 
-**Target trace shape:**
+**Target trace shape (illustrative, not measured):**
 ```
 Request ID: abc123
-├─ Safety Check (50ms)
-│  └─ ML Model Inference (45ms)
-├─ LLM Call (2000ms)
-│  ├─ Prompt Construction (5ms)
-│  ├─ Vertex AI API (1990ms)
-│  └─ Response Parsing (5ms)
-├─ Tool Call: get_account_balance (100ms)
-│  ├─ IAM Check (10ms)
-│  ├─ Database Query (80ms)
-│  └─ Audit Logging (10ms)
-└─ Total: 2150ms
+├─ Safety Check
+│  └─ ML Model Inference
+├─ LLM Call
+│  ├─ Prompt Construction
+│  ├─ Vertex AI API
+│  └─ Response Parsing
+├─ Tool Call: get_account_balance
+│  ├─ IAM Check
+│  ├─ Database Query
+│  └─ Audit Logging
+└─ Total
 ```
 
 **Benefits:**
