@@ -50,10 +50,25 @@ reach the IAM-protected `get_escalations` and `resolve_escalation` through
 - **ADMIN**: Same data access as STAFF (its extra config/user-management permissions are not yet used by any tool)
 
 The write helpers (`create_user`, `create_account`, `update_account`,
-`create_transaction`, `create_escalation`) and `get_user` do no IAM checks.
+`create_transaction`, `create_escalation`, `transfer_funds`) and `get_user` do no IAM checks.
 The write helpers are called by `seed_database.py` and from inside tools
 (the banking tools call them only after their own checks); `get_user` is only
 used by `seed_database.py`.
+
+## Transfers
+
+`transfer_money` rejects same-account transfers and amounts that are not
+positive, finite numbers with at most 2 decimal places (they are rejected, not
+rounded) before touching the database. `Database.transfer_funds` applies the
+same amount check itself (`validate_transfer_amount`, raising `ValueError`), so
+direct calls are covered too, then applies
+the debit, the credit and both `transactions` rows in a single SQLite
+transaction (`BEGIN IMMEDIATE`): the debit only succeeds if the stored balance
+still covers the amount, both balances are rounded to cents (`ROUND(..., 2)`),
+and any failure rolls the whole transfer back. Balances remain `REAL` (floats).
+
+Every `Database` method closes its connection even when a query raises, so a
+failed call cannot leave the database locked.
 
 ## Backup
 

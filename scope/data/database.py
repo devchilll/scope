@@ -6,10 +6,13 @@ Uses SQLite for development, can be migrated to PostgreSQL for production.
 
 import sqlite3
 import json
+import math
+from contextlib import closing
 from pathlib import Path
-from typing import List, Optional, Dict, Any, TYPE_CHECKING
+from typing import List, Optional, Dict, Any, Tuple, TYPE_CHECKING
 from datetime import datetime, timedelta
 import uuid
+from decimal import Decimal
 
 from .models import User, Account, Transaction, AccountType, TransactionType
 from ..iam import User as IAMUser, AccessControl, Permission, AccessDeniedException
@@ -33,6 +36,37 @@ def _parse_metadata(raw: Optional[str]) -> Optional[Dict[str, Any]]:
     return value if isinstance(value, dict) else None
 
 
+def validate_transfer_amount(amount: Any) -> float:
+    """Check that a transfer amount is a positive, finite number in whole cents.
+
+    Shared by the ``transfer_money`` tool and ``Database.transfer_funds``.
+    Amounts with more than 2 decimal places are rejected, not rounded.
+
+    Args:
+        amount: The requested amount (an int or float; bool is not accepted)
+
+    Returns:
+        The amount as a float
+
+    Raises:
+        ValueError: The amount is not a number, not finite (including an int
+            too large for a float), not positive, or not in whole cents
+    """
+    if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+        raise ValueError("Transfer amount must be a number.")
+    try:
+        finite = math.isfinite(amount)
+    except OverflowError:  # an int too large to convert to a float
+        finite = False
+    if not finite:
+        raise ValueError("Transfer amount must be a finite number.")
+    if amount <= 0:
+        raise ValueError("Transfer amount must be greater than zero.")
+    if Decimal(str(amount)).as_tuple().exponent < -2:
+        raise ValueError("Transfer amount cannot have more than 2 decimal places.")
+    return float(amount)
+
+
 class Database:
     """Database manager with IAM-protected operations.
 
@@ -41,10 +75,13 @@ class Database:
     `get_account_transactions` also check account ownership,
     `get_escalations` limits callers without VIEW_ALL_ESCALATIONS to their
     own tickets, and `resolve_escalation` checks the role only. The write
-    helpers (`create_*`, `update_account`) and `get_user` do no IAM checks;
-    the write helpers are called by the seed script and from inside tools
-    (the banking tools call them only after their own checks), and
-    `get_user` only by the seed script.
+    helpers (`create_*`, `update_account`, `transfer_funds`) and `get_user`
+    do no IAM checks; the write helpers are called by the seed script and
+    from inside tools (the banking tools call them only after their own
+    checks), and `get_user` only by the seed script.
+
+    Every method opens its own connection and closes it even if a query
+    raises, so a failed call cannot leave the database locked.
     """
     
     def __init__(self, db_path: Optional[str] = None):
@@ -63,78 +100,77 @@ class Database:
     
     def _init_database(self):
         """Initialize database schema."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            cursor = conn.cursor()
         
-        # Users table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                email TEXT NOT NULL UNIQUE,
-                phone TEXT,
-                created_at TEXT NOT NULL
-            )
-        """)
+            # Users table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    email TEXT NOT NULL UNIQUE,
+                    phone TEXT,
+                    created_at TEXT NOT NULL
+                )
+            """)
         
-        # Accounts table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS accounts (
-                account_id TEXT PRIMARY KEY,
-                user_id TEXT NOT NULL,
-                account_type TEXT NOT NULL,
-                balance REAL NOT NULL,
-                currency TEXT NOT NULL DEFAULT 'USD',
-                status TEXT NOT NULL DEFAULT 'active',
-                created_at TEXT NOT NULL,
-                FOREIGN KEY (user_id) REFERENCES users(user_id)
-            )
-        """)
+            # Accounts table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS accounts (
+                    account_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    account_type TEXT NOT NULL,
+                    balance REAL NOT NULL,
+                    currency TEXT NOT NULL DEFAULT 'USD',
+                    status TEXT NOT NULL DEFAULT 'active',
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                )
+            """)
         
-        # Transactions table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS transactions (
-                transaction_id TEXT PRIMARY KEY,
-                account_id TEXT NOT NULL,
-                transaction_type TEXT NOT NULL,
-                amount REAL NOT NULL,
-                currency TEXT NOT NULL DEFAULT 'USD',
-                description TEXT,
-                timestamp TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'completed',
-                from_account_id TEXT,
-                to_account_id TEXT,
-                FOREIGN KEY (account_id) REFERENCES accounts(account_id)
-            )
-        """)
+            # Transactions table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS transactions (
+                    transaction_id TEXT PRIMARY KEY,
+                    account_id TEXT NOT NULL,
+                    transaction_type TEXT NOT NULL,
+                    amount REAL NOT NULL,
+                    currency TEXT NOT NULL DEFAULT 'USD',
+                    description TEXT,
+                    timestamp TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'completed',
+                    from_account_id TEXT,
+                    to_account_id TEXT,
+                    FOREIGN KEY (account_id) REFERENCES accounts(account_id)
+                )
+            """)
         
-        # Escalations table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS escalations (
-                id TEXT PRIMARY KEY,
-                user_id TEXT NOT NULL,
-                input_text TEXT NOT NULL,
-                agent_reasoning TEXT NOT NULL,
-                confidence REAL NOT NULL,
-                created_at TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending',
-                resolved_at TEXT,
-                resolved_by TEXT,
-                resolution TEXT,
-                metadata TEXT
-            )
-        """)
+            # Escalations table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS escalations (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    input_text TEXT NOT NULL,
+                    agent_reasoning TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    created_at TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    resolved_at TEXT,
+                    resolved_by TEXT,
+                    resolution TEXT,
+                    metadata TEXT
+                )
+            """)
         
-        # Indexes
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_accounts_user ON accounts(user_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_timestamp ON transactions(timestamp)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_escalations_user ON escalations(user_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_escalations_status ON escalations(status)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_escalations_created ON escalations(created_at)")
+            # Indexes
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_accounts_user ON accounts(user_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_timestamp ON transactions(timestamp)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_escalations_user ON escalations(user_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_escalations_status ON escalations(status)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_escalations_created ON escalations(created_at)")
         
-        conn.commit()
-        conn.close()
+            conn.commit()
     
     def _get_connection(self) -> sqlite3.Connection:
         """Get database connection."""
@@ -153,16 +189,15 @@ class Database:
         Returns:
             User ID
         """
-        conn = self._get_connection()
-        cursor = conn.cursor()
+        with closing(self._get_connection()) as conn:
+            cursor = conn.cursor()
         
-        cursor.execute("""
-            INSERT INTO users (user_id, name, email, phone, created_at)
-            VALUES (?, ?, ?, ?, ?)
-        """, (user.user_id, user.name, user.email, user.phone, user.created_at.isoformat()))
+            cursor.execute("""
+                INSERT INTO users (user_id, name, email, phone, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (user.user_id, user.name, user.email, user.phone, user.created_at.isoformat()))
         
-        conn.commit()
-        conn.close()
+            conn.commit()
         return user.user_id
     
     def get_user(self, user_id: str) -> Optional[User]:
@@ -174,12 +209,11 @@ class Database:
         Returns:
             User model or None
         """
-        conn = self._get_connection()
-        cursor = conn.cursor()
+        with closing(self._get_connection()) as conn:
+            cursor = conn.cursor()
         
-        cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
-        row = cursor.fetchone()
-        conn.close()
+            cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+            row = cursor.fetchone()
         
         if not row:
             return None
@@ -208,24 +242,23 @@ class Database:
         Returns:
             Account ID
         """
-        conn = self._get_connection()
-        cursor = conn.cursor()
+        with closing(self._get_connection()) as conn:
+            cursor = conn.cursor()
         
-        cursor.execute("""
-            INSERT INTO accounts (account_id, user_id, account_type, balance, currency, status, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
-            account.account_id,
-            account.user_id,
-            account.account_type.value,
-            account.balance,
-            account.currency,
-            account.status,
-            account.created_at.isoformat()
-        ))
+            cursor.execute("""
+                INSERT INTO accounts (account_id, user_id, account_type, balance, currency, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                account.account_id,
+                account.user_id,
+                account.account_type.value,
+                account.balance,
+                account.currency,
+                account.status,
+                account.created_at.isoformat()
+            ))
         
-        conn.commit()
-        conn.close()
+            conn.commit()
         return account.account_id
     
     def update_account(self, account: Account) -> bool:
@@ -237,23 +270,22 @@ class Database:
         Returns:
             True if successful
         """
-        conn = self._get_connection()
-        cursor = conn.cursor()
+        with closing(self._get_connection()) as conn:
+            cursor = conn.cursor()
         
-        cursor.execute("""
-            UPDATE accounts 
-            SET balance = ?,
-                status = ?
-            WHERE account_id = ?
-        """, (
-            account.balance,
-            account.status,
-            account.account_id
-        ))
+            cursor.execute("""
+                UPDATE accounts 
+                SET balance = ?,
+                    status = ?
+                WHERE account_id = ?
+            """, (
+                account.balance,
+                account.status,
+                account.account_id
+            ))
         
-        conn.commit()
-        success = cursor.rowcount > 0
-        conn.close()
+            conn.commit()
+            success = cursor.rowcount > 0
         return success
     
     def get_account(self, iam_user: IAMUser, account_id: str) -> Optional[Account]:
@@ -272,12 +304,11 @@ class Database:
         # Check permission
         AccessControl.check_permission(iam_user, Permission.VIEW_ACCOUNTS)
         
-        conn = self._get_connection()
-        cursor = conn.cursor()
+        with closing(self._get_connection()) as conn:
+            cursor = conn.cursor()
         
-        cursor.execute("SELECT * FROM accounts WHERE account_id = ?", (account_id,))
-        row = cursor.fetchone()
-        conn.close()
+            cursor.execute("SELECT * FROM accounts WHERE account_id = ?", (account_id,))
+            row = cursor.fetchone()
         
         if not row:
             return None
@@ -321,12 +352,11 @@ class Database:
                     f"User {iam_user.user_id} cannot access accounts for {user_id}"
                 )
         
-        conn = self._get_connection()
-        cursor = conn.cursor()
+        with closing(self._get_connection()) as conn:
+            cursor = conn.cursor()
         
-        cursor.execute("SELECT * FROM accounts WHERE user_id = ?", (user_id,))
-        rows = cursor.fetchall()
-        conn.close()
+            cursor.execute("SELECT * FROM accounts WHERE user_id = ?", (user_id,))
+            rows = cursor.fetchall()
         
         return [
             Account(
@@ -352,12 +382,20 @@ class Database:
         Returns:
             Transaction ID
         """
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
+        with closing(self._get_connection()) as conn:
+            cursor = conn.cursor()
+
+            self._insert_transaction(cursor, transaction)
+
+            conn.commit()
+        return transaction.transaction_id
+
+    @staticmethod
+    def _insert_transaction(cursor: sqlite3.Cursor, transaction: Transaction) -> None:
+        """Insert one transaction row using an open cursor (no commit)."""
         cursor.execute("""
-            INSERT INTO transactions 
-            (transaction_id, account_id, transaction_type, amount, currency, 
+            INSERT INTO transactions
+            (transaction_id, account_id, transaction_type, amount, currency,
              description, timestamp, status, from_account_id, to_account_id)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
@@ -372,11 +410,85 @@ class Database:
             transaction.from_account_id,
             transaction.to_account_id
         ))
-        
-        conn.commit()
-        conn.close()
-        return transaction.transaction_id
-    
+
+    def transfer_funds(
+        self,
+        from_account_id: str,
+        to_account_id: str,
+        amount: float,
+        transactions: List[Transaction]
+    ) -> Tuple[float, float]:
+        """Move money between two accounts in a single SQLite transaction.
+
+        The debit, the credit and the given transaction rows are committed
+        together or not at all, so a failure part-way can neither lose nor
+        create money. The amount is checked with ``validate_transfer_amount``
+        (positive, finite, whole cents) before the database is opened. The
+        debit is conditional (``balance >= amount``) and both updates are
+        relative to the stored balance, so the funds check and the write
+        cannot be split by a concurrent transfer. Resulting balances are
+        rounded to cents.
+
+        Args:
+            from_account_id: Account to debit
+            to_account_id: Account to credit (must differ from the source)
+            amount: Positive, finite amount with at most 2 decimal places
+            transactions: Transaction rows to record with the transfer
+
+        Returns:
+            (new source balance, new destination balance)
+
+        Raises:
+            ValueError: Invalid amount, same account, unknown account or
+                insufficient funds (nothing is written)
+        """
+        if from_account_id == to_account_id:
+            raise ValueError("Source and destination accounts must be different")
+        amount = validate_transfer_amount(amount)
+
+        with closing(self._get_connection()) as conn:
+            try:
+                cursor = conn.cursor()
+                # Take the write lock before reading/updating balances
+                cursor.execute("BEGIN IMMEDIATE")
+
+                cursor.execute("SELECT 1 FROM accounts WHERE account_id = ?", (to_account_id,))
+                if cursor.fetchone() is None:
+                    raise ValueError(f"Account {to_account_id} not found")
+
+                cursor.execute("""
+                    UPDATE accounts
+                    SET balance = ROUND(balance - ?, 2)
+                    WHERE account_id = ? AND balance >= ?
+                """, (amount, from_account_id, amount))
+                if cursor.rowcount != 1:
+                    cursor.execute("SELECT 1 FROM accounts WHERE account_id = ?", (from_account_id,))
+                    if cursor.fetchone() is None:
+                        raise ValueError(f"Account {from_account_id} not found")
+                    raise ValueError(f"Insufficient funds in account {from_account_id}")
+
+                cursor.execute("""
+                    UPDATE accounts
+                    SET balance = ROUND(balance + ?, 2)
+                    WHERE account_id = ?
+                """, (amount, to_account_id))
+
+                for transaction in transactions:
+                    self._insert_transaction(cursor, transaction)
+
+                cursor.execute(
+                    "SELECT account_id, balance FROM accounts WHERE account_id IN (?, ?)",
+                    (from_account_id, to_account_id)
+                )
+                balances = {row["account_id"]: row["balance"] for row in cursor.fetchall()}
+
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
+
+        return balances[from_account_id], balances[to_account_id]
+
     def get_account_transactions(
         self, 
         iam_user: IAMUser, 
@@ -404,18 +516,17 @@ class Database:
         if not account:
             return []
         
-        conn = self._get_connection()
-        cursor = conn.cursor()
+        with closing(self._get_connection()) as conn:
+            cursor = conn.cursor()
         
-        since = (datetime.now() - timedelta(days=days)).isoformat()
-        cursor.execute("""
-            SELECT * FROM transactions 
-            WHERE account_id = ? AND timestamp >= ?
-            ORDER BY timestamp DESC
-        """, (account_id, since))
+            since = (datetime.now() - timedelta(days=days)).isoformat()
+            cursor.execute("""
+                SELECT * FROM transactions 
+                WHERE account_id = ? AND timestamp >= ?
+                ORDER BY timestamp DESC
+            """, (account_id, since))
         
-        rows = cursor.fetchall()
-        conn.close()
+            rows = cursor.fetchall()
         
         return [
             Transaction(
@@ -444,30 +555,29 @@ class Database:
         Returns:
             Ticket ID
         """
-        conn = self._get_connection()
-        cursor = conn.cursor()
+        with closing(self._get_connection()) as conn:
+            cursor = conn.cursor()
         
-        cursor.execute("""
-            INSERT INTO escalations 
-            (id, user_id, input_text, agent_reasoning, confidence, created_at, 
-             status, resolved_at, resolved_by, resolution, metadata)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            ticket.id,
-            ticket.user_id,
-            ticket.input_text,
-            ticket.agent_reasoning,
-            ticket.confidence,
-            ticket.created_at.isoformat(),
-            ticket.status,
-            ticket.resolved_at.isoformat() if ticket.resolved_at else None,
-            ticket.resolved_by,
-            ticket.resolution,
-            json.dumps(ticket.metadata) if ticket.metadata else None
-        ))
+            cursor.execute("""
+                INSERT INTO escalations 
+                (id, user_id, input_text, agent_reasoning, confidence, created_at, 
+                 status, resolved_at, resolved_by, resolution, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                ticket.id,
+                ticket.user_id,
+                ticket.input_text,
+                ticket.agent_reasoning,
+                ticket.confidence,
+                ticket.created_at.isoformat(),
+                ticket.status,
+                ticket.resolved_at.isoformat() if ticket.resolved_at else None,
+                ticket.resolved_by,
+                ticket.resolution,
+                json.dumps(ticket.metadata) if ticket.metadata else None
+            ))
         
-        conn.commit()
-        conn.close()
+            conn.commit()
         return ticket.id
     
     def get_escalations(
@@ -492,34 +602,33 @@ class Database:
         # Check permission
         AccessControl.check_permission(iam_user, Permission.VIEW_OWN_ESCALATIONS)
         
-        conn = self._get_connection()
-        cursor = conn.cursor()
+        with closing(self._get_connection()) as conn:
+            cursor = conn.cursor()
         
-        # Build query based on permission
-        if not iam_user.has_permission(Permission.VIEW_ALL_ESCALATIONS):
-            # Without VIEW_ALL_ESCALATIONS (USER), only own escalations
-            if status:
-                cursor.execute(
-                    "SELECT * FROM escalations WHERE user_id = ? AND status = ? ORDER BY created_at DESC",
-                    (iam_user.user_id, status)
-                )
+            # Build query based on permission
+            if not iam_user.has_permission(Permission.VIEW_ALL_ESCALATIONS):
+                # Without VIEW_ALL_ESCALATIONS (USER), only own escalations
+                if status:
+                    cursor.execute(
+                        "SELECT * FROM escalations WHERE user_id = ? AND status = ? ORDER BY created_at DESC",
+                        (iam_user.user_id, status)
+                    )
+                else:
+                    cursor.execute(
+                        "SELECT * FROM escalations WHERE user_id = ? ORDER BY created_at DESC",
+                        (iam_user.user_id,)
+                    )
             else:
-                cursor.execute(
-                    "SELECT * FROM escalations WHERE user_id = ? ORDER BY created_at DESC",
-                    (iam_user.user_id,)
-                )
-        else:
-            # STAFF, ADMIN and SYSTEM (VIEW_ALL_ESCALATIONS) see all escalations
-            if status:
-                cursor.execute(
-                    "SELECT * FROM escalations WHERE status = ? ORDER BY created_at DESC",
-                    (status,)
-                )
-            else:
-                cursor.execute("SELECT * FROM escalations ORDER BY created_at DESC")
+                # STAFF, ADMIN and SYSTEM (VIEW_ALL_ESCALATIONS) see all escalations
+                if status:
+                    cursor.execute(
+                        "SELECT * FROM escalations WHERE status = ? ORDER BY created_at DESC",
+                        (status,)
+                    )
+                else:
+                    cursor.execute("SELECT * FROM escalations ORDER BY created_at DESC")
         
-        rows = cursor.fetchall()
-        conn.close()
+            rows = cursor.fetchall()
         
         return [
             EscalationTicket(
@@ -560,25 +669,24 @@ class Database:
         # Check permission
         AccessControl.check_permission(iam_user, Permission.RESOLVE_ESCALATIONS)
         
-        conn = self._get_connection()
-        cursor = conn.cursor()
+        with closing(self._get_connection()) as conn:
+            cursor = conn.cursor()
         
-        cursor.execute("""
-            UPDATE escalations 
-            SET status = 'resolved',
-                resolved_at = ?,
-                resolved_by = ?,
-                resolution = ?
-            WHERE id = ?
-        """, (
-            datetime.now().isoformat(),
-            iam_user.user_id,
-            resolution,
-            ticket_id
-        ))
+            cursor.execute("""
+                UPDATE escalations 
+                SET status = 'resolved',
+                    resolved_at = ?,
+                    resolved_by = ?,
+                    resolution = ?
+                WHERE id = ?
+            """, (
+                datetime.now().isoformat(),
+                iam_user.user_id,
+                resolution,
+                ticket_id
+            ))
         
-        conn.commit()
-        success = cursor.rowcount > 0
-        conn.close()
+            conn.commit()
+            success = cursor.rowcount > 0
         
         return success

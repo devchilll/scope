@@ -129,16 +129,18 @@ class TestTransferMoney:
         acc2 = MagicMock(user_id="user1", balance=100.0, account_id="acc2")
         
         mock_db.get_account.side_effect = [acc1, acc2]
-        
+        mock_db.transfer_funds.return_value = (400.0, 200.0)
+
         # Call transfer
         result = transfer_money("acc1", "acc2", 100.0)
-        
-        # Verify db.create_transaction was called (NOT add_transaction)
-        assert mock_db.create_transaction.called
-        assert mock_db.create_transaction.call_count == 2
-        
-        # Verify db.update_account was called
-        assert mock_db.update_account.called
-        assert mock_db.update_account.call_count == 2
-        
+
+        # Debit, credit and both transaction rows go through one atomic call
+        mock_db.transfer_funds.assert_called_once()
+        args = mock_db.transfer_funds.call_args.args
+        assert args[:3] == ("acc1", "acc2", 100.0)
+        assert [t.amount for t in args[3]] == [-100.0, 100.0]
+        assert not mock_db.update_account.called
+        assert not mock_db.create_transaction.called
+
         assert "Transfer successful" in result
+        assert "New balance: $400.00" in result

@@ -21,6 +21,7 @@ tests/
 ├── test_audit_logging.py       # Tool-call audit callback, daily rollover, log viewing
 ├── test_callbacks.py           # Pre-model safety gate (before_model_callback)
 ├── test_escalation_config.py   # Escalation threshold, COMP-004 transfer guard, custom rules
+├── test_transfer_validation.py # transfer_money validation, atomic transfer, connection cleanup
 └── test_agent_integration.py   # Agentic system integration
 ```
 
@@ -154,6 +155,14 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 - ✅ COMP-004: transfers above `high_value_amount` are not executed and create a ticket; at the limit they execute; the limit follows the YAML value; an over-limit transfer from an account the caller does not own is refused without a ticket
 - ✅ `report_fraud` ticket metadata is persisted
 - ✅ `GOOGLE_COMPLIANCE_RULES` appended to the agent instruction (unchanged when empty); rules set in the environment, including braces, appear verbatim in the system instruction produced by ADK's instruction processing
+
+### Transfers (`tests/test_transfer_validation.py`)
+- ✅ Same-account transfers rejected (tool and database), no balance change
+- ✅ NaN / ±inf, an int too large for a float (`10**400`), non-numeric (`"50"`, `None`, `True`), zero / negative and sub-cent (> 2 decimal places) amounts rejected before any database access
+- ✅ `Database.transfer_funds` called directly rejects the same invalid amounts (e.g. `0.005`, `0.025`, NaN) with `ValueError`; nothing is written
+- ✅ A failed query closes its connection (no "database is locked" on the next call)
+- ✅ Debit, credit and transaction rows roll back together on failure; unknown destination does not debit; funds re-checked inside the transaction, so a transfer that passes `transfer_money`'s pre-check on an out-of-date (higher) balance is refused with nothing written
+- ✅ Balances rounded to cents (ten $0.10 transfers leave exact balances)
 
 ## Test Configuration
 
