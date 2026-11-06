@@ -20,7 +20,18 @@ if TYPE_CHECKING:
 
 
 class Database:
-    """Database manager with IAM-protected operations."""
+    """Database manager with IAM-protected operations.
+
+    Methods given an `iam_user` check its role: `get_account`,
+    `get_user_accounts` (only when one is passed) and
+    `get_account_transactions` also check account ownership,
+    `get_escalations` limits callers without VIEW_ALL_ESCALATIONS to their
+    own tickets, and `resolve_escalation` checks the role only. The write
+    helpers (`create_*`, `update_account`) and `get_user` do no IAM checks;
+    the write helpers are called by the seed script and from inside tools
+    (the banking tools call them only after their own checks), and
+    `get_user` only by the seed script.
+    """
     
     def __init__(self, db_path: Optional[str] = None):
         """Initialize database connection.
@@ -371,6 +382,9 @@ class Database:
         Raises:
             AccessDeniedException: If user lacks permission
         """
+        # Check permission
+        AccessControl.check_permission(iam_user, Permission.VIEW_TRANSACTIONS)
+
         # Verify user can access this account
         account = self.get_account(iam_user, account_id)
         if not account:
@@ -467,9 +481,9 @@ class Database:
         conn = self._get_connection()
         cursor = conn.cursor()
         
-        # Build query based on role
-        if iam_user.role.value == "user":
-            # Users can only see their own escalations
+        # Build query based on permission
+        if not iam_user.has_permission(Permission.VIEW_ALL_ESCALATIONS):
+            # Without VIEW_ALL_ESCALATIONS (USER), only own escalations
             if status:
                 cursor.execute(
                     "SELECT * FROM escalations WHERE user_id = ? AND status = ? ORDER BY created_at DESC",
@@ -481,7 +495,7 @@ class Database:
                     (iam_user.user_id,)
                 )
         else:
-            # Staff and Admin can see all escalations
+            # STAFF, ADMIN and SYSTEM (VIEW_ALL_ESCALATIONS) see all escalations
             if status:
                 cursor.execute(
                     "SELECT * FROM escalations WHERE status = ? ORDER BY created_at DESC",

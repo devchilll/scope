@@ -1,7 +1,7 @@
 from .config import Config
 from .compliance import format_compliance_section
 from .rules import SAFETY_RULES_TEXT, COMPLIANCE_RULES_TEXT
-from .iam import UserRole, Permission, get_permissions
+from .iam import UserRole, Permission, get_permissions, parse_role
 
 # Initialize config to access policy
 configs = Config()
@@ -169,7 +169,7 @@ def get_tool_descriptions(role_str: str) -> str:
         Formatted tool descriptions
     """
     try:
-        role = UserRole(role_str.lower())
+        role = parse_role(role_str)
     except ValueError:
         role = UserRole.USER
 
@@ -245,7 +245,7 @@ After completing the 3 safety checks above, handle the action:
 
 **IMPORTANT**: When calling tools that accept `user_id` parameter:
 - If the request is for the CURRENT user (e.g., "my balance", "my accounts"), **DO NOT pass user_id** - it will default to the current user automatically
-- Only pass `user_id` explicitly if you need to access another user's data (requires admin permissions)
+- Only pass `user_id` explicitly if you need to access another user's data (STAFF/ADMIN only; tools reject another user's id for USER)
 
 ## BANK INFORMATION:
 - Bank Name: {configs.bank_info.name}

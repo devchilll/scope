@@ -35,10 +35,12 @@ class UserRole(Enum):
     # Regular user - can use agent, view own escalations
     USER = "user"
     
-    # Staff - can view all escalations to help resolve them (read-only)
+    # Staff - can view any customer's accounts/transactions, view and resolve
+    # all escalations, and view audit logs
     STAFF = "staff"
-    
-    # Admin - full access including resolving escalations and config
+
+    # Admin - everything STAFF can do, plus config, compliance-rule and
+    # user-management permissions (defined, but not yet checked by any tool)
     ADMIN = "admin"
     
     # System - internal system operations
@@ -86,6 +88,28 @@ ROLE_PERMISSIONS: dict[UserRole, Set[Permission]] = {
 }
 
 
+def parse_role(role: "str | UserRole") -> UserRole:
+    """Parse a role string into a UserRole, case-insensitively.
+
+    Accepts the role name in any case ("STAFF", "staff", " Staff ").
+
+    Args:
+        role: Role string (an existing UserRole is returned unchanged)
+
+    Returns:
+        Matching UserRole
+
+    Raises:
+        ValueError: If the string does not name a known role
+    """
+    if isinstance(role, UserRole):
+        return role
+    try:
+        return UserRole(str(role).strip().lower())
+    except ValueError:
+        raise ValueError(f"Unknown role: {role!r}") from None
+
+
 def get_permissions(role: UserRole) -> Set[Permission]:
     """Get all permissions for a given role.
     
@@ -122,9 +146,9 @@ def get_role_description(role: UserRole) -> str:
     """
     descriptions = {
         UserRole.USER: "Regular customer, can only access their own data (accounts, transactions, escalations)",
-        UserRole.STAFF: "Bank employee, authorized to view customer data and all escalation tickets for support purposes",
-        UserRole.ADMIN: "Administrator, full access to all systems, data, and can resolve escalations and modify configurations",
-        UserRole.SYSTEM: "Internal system operations, full access to all functions"
+        UserRole.STAFF: "Bank employee, authorized to view any customer's accounts and transactions, view and resolve all escalation tickets, and view audit logs for support purposes",
+        UserRole.ADMIN: "Administrator, same access as STAFF (including resolving escalations) plus configuration, compliance-rule and user-management permissions",
+        UserRole.SYSTEM: "Internal system operations, holds every permission"
     }
     return descriptions.get(role, "Unknown role")
 
@@ -135,6 +159,6 @@ def get_all_role_descriptions() -> str:
     Returns:
         Formatted string with all role descriptions
     """
-    return """- **USER** role: Regular customer, can only access their own data (accounts, transactions, escalations)
-- **STAFF** role: Bank employee, authorized to view customer data and all escalation tickets for support purposes
-- **ADMIN** role: Administrator, full access to all systems, data, and can resolve escalations and modify configurations"""
+    return "\n".join(
+        f"- **{role.name}** role: {get_role_description(role)}" for role in UserRole
+    )

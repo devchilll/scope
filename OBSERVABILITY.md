@@ -23,7 +23,7 @@
   - Security incidents (CC7.3)
 
 ### 3. **IAM Access Control**
-- Role-based permissions enforced on all database operations
+- Every agent-facing banking tool checks the caller's role and account ownership
 - Access denied exceptions logged
 
 ### 4. **Escalation Queue**
