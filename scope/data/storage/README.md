@@ -39,10 +39,17 @@ This directory contains the SQLite database for banking data.
 
 ## Access Control
 
-All database operations are IAM-protected:
-- **USER**: Can only access own accounts and transactions
-- **STAFF**: Can view all accounts (read-only)
-- **ADMIN**: Full access to all operations
+Every agent-facing banking tool (`scope/data/tools.py`) runs as the current
+user and checks that user's role and account ownership through the
+IAM-protected read methods (`get_account`, `get_user_accounts`,
+`get_account_transactions`, `get_escalations`, `resolve_escalation`):
+- **USER**: Can only access own accounts, transactions and escalations, and only report fraud on / transfer between own accounts
+- **STAFF**: Can view any customer's accounts and transactions, file fraud reports for customers, and view and resolve all escalations; cannot move customer money
+- **ADMIN**: Same data access as STAFF (its extra config/user-management permissions are not yet used by any tool)
+
+The write helpers (`create_user`, `create_account`, `update_account`,
+`create_transaction`, `create_escalation`) and `get_user` do no IAM checks;
+they are used for seeding and by tools after the tool's own checks.
 
 ## Backup
 

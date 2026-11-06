@@ -7,7 +7,7 @@ SCOPE, by Ivy Si
 - **S**afety Guardrails: ML pre-model gate + LLM contextual safety
 - **C**ompliance & Policy-as-Code: YAML rules the agent must cite
 - **O**bservability & Auditing: JSONL audit trail, PCI-DSS / SOC2 logs, ADK tracing
-- **P**ermissions & Identity (IAM): USER / STAFF / ADMIN / SYSTEM roles enforced in every tool
+- **P**ermissions & Identity (IAM): USER / STAFF / ADMIN / SYSTEM roles; every banking tool checks the caller's role and account ownership
 - **E**scalation Protocols: human-in-the-loop review queue
 
 ---
@@ -80,7 +80,7 @@ Response: "Your checking account acc001 has a balance of $..."
 **Key Features:**
 - 🛡️ **Pre-LLM Safety**: Every request is screened by an ML classifier in `before_model_callback` before the model acts; flagged inputs never reach the LLM
 - 📜 **Policy-as-Code**: Safety and compliance rules live in YAML with IDs the agent must cite
-- 🔐 **Role-Based Access**: USER / STAFF / ADMIN / SYSTEM with per-tool permission checks
+- 🔐 **Role-Based Access**: USER / STAFF / ADMIN / SYSTEM with role and ownership checks in the banking, escalation-queue and audit-log tools
 - 📊 **Database Tools**: IAM-protected queries to user / account / transaction tables
 - 📝 **Audit Logging**: Every input, safety score, decision, and tool call logged (PCI-DSS, SOC2)
 - 🚨 **Escalation**: Uncertain cases routed to a human review queue with role-gated resolution
@@ -317,18 +317,20 @@ safety_rules:
 
 ## 👥 Pillar 4: IAM (Identity & Access Management)
 
-Role-based access control enforced inside every tool.
+Role-based access control. Every agent-facing banking tool runs as the configured current user and checks that user's role and account ownership; the escalation-queue and audit-log tools check their own permissions (see the table below).
 
 ### User Roles
 
 | Role | Permissions | Use Case |
 |------|-------------|----------|
 | **USER** | Use agent, view own accounts/transactions, view own escalations | Banking customers |
-| **STAFF** | + View any customer's accounts, view all escalations, resolve escalations, view audit logs | Customer service reps |
+| **STAFF** | + View any customer's accounts/transactions, view all escalations, resolve escalations, view config, view audit logs | Customer service reps |
 | **ADMIN** | + Modify config, modify compliance rules, manage users | Bank managers |
 | **SYSTEM** | All permissions | Automated processes |
 
-Exact mapping: `scope/iam/roles.py` (`ROLE_PERMISSIONS`).
+Exact mapping: `scope/iam/roles.py` (`ROLE_PERMISSIONS`). Roles are read from `GOOGLE_IAM_CURRENT_USER_ROLE` case-insensitively (`parse_role`).
+
+Permissions actually checked by tools today: `VIEW_ACCOUNTS` / `VIEW_TRANSACTIONS` (banking tools), `VIEW_OWN_ESCALATIONS` / `VIEW_ALL_ESCALATIONS` (`list_escalation_tickets`; without `VIEW_ALL_ESCALATIONS` only your own tickets are returned), `RESOLVE_ESCALATIONS` (`resolve_escalation_ticket`), `VIEW_LOGS` (`view_audit_logs`); `USE_AGENT` only decides which tools the prompt advertises. `VIEW_CONFIG`, `MODIFY_CONFIG`, `MODIFY_COMPLIANCE_RULES`, `MANAGE_USERS` and `BYPASS_SAFETY_CHECKS` are defined and granted in `ROLE_PERMISSIONS` but not yet used by any tool, so in the current build ADMIN can do the same things as STAFF, and nothing can bypass the safety checks.
 
 ### Usage
 
@@ -358,6 +360,8 @@ def get_account_balance(account_id: str) -> str:
     compliance_logger.log_pci_data_access(iam_user.user_id, "account", account_id, "read")
     return f"Account {account_id}: ${account.balance:.2f}"
 ```
+
+Tools that take a `user_id` (`get_transaction_history`, `get_user_accounts`, `report_fraud`) treat it only as the target customer: the call still runs as the current user, a USER passing someone else's id is denied, and the audit log records the real caller. `report_fraud` only files a ticket for an account the caller may access (a USER's own account; any customer account for STAFF/ADMIN), and `transfer_money` only moves money between the caller's own accounts. The database write helpers used for seeding (`create_user`, `create_account`, `update_account`, `create_transaction`, `create_escalation`) are not agent tools and do no IAM checks themselves.
 
 Agent tools: `get_account_balance`, `get_transaction_history`, `get_user_accounts`, `report_fraud`, `transfer_money` (banking); `safety_check_layer1/2`, `make_safe_and_compliant_decision`, `create_escalation_ticket`, `list_escalation_tickets`, `resolve_escalation_ticket`, `view_audit_logs`, `log_agent_response` (governance). The prompt only advertises the tools the current role is permitted to use.
 
@@ -407,7 +411,7 @@ In the agent, STAFF/ADMIN use the `list_escalation_tickets` and `resolve_escalat
 
 ## 📊 Data Layer
 
-SQLite banking database with IAM-protected operations.
+SQLite banking database. The read methods that take an IAM user (`get_account`, `get_user_accounts`, `get_account_transactions`, `get_escalations`, `resolve_escalation`) are IAM-protected; the `create_*` / `update_account` write helpers below are unchecked and meant for seeding or for use after a tool's own checks.
 
 ```python
 from scope.data import Database, User, Account, Transaction, AccountType, TransactionType

@@ -12,7 +12,8 @@ scope/
 ├── compliance/tests/
 │   └── test_compliance.py      # Rule transformation (5 tests)
 ├── iam/tests/
-│   └── test_iam.py             # Roles, permissions, ACL (14 tests)
+│   ├── test_iam.py             # Roles, permissions, ACL (14 tests)
+│   └── test_tool_enforcement.py # Banking tools act as current user (24 tests)
 └── escalation/tests/
     └── test_escalation.py      # Queue, tickets, SQLite (14 tests)
 
@@ -89,6 +90,13 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 - ✅ Permission check (raises exception)
 - ✅ Escalation viewing permissions
 - ✅ Escalation resolution permissions
+
+### IAM tool enforcement (24 tests, `scope/iam/tests/test_tool_enforcement.py`)
+- ✅ Case-insensitive role parsing (`parse_role`)
+- ✅ Role descriptions match `ROLE_PERMISSIONS`
+- ✅ USER cannot read another user's transactions or accounts, even by passing their `user_id`
+- ✅ STAFF can read a customer's transactions; audit log records STAFF as the actor
+- ✅ `report_fraud` only files tickets for accounts the caller may access
 
 ### Pillar 5: Escalation (14 tests)
 - ✅ Ticket creation
