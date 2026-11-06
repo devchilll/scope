@@ -69,3 +69,95 @@ class TestTextSafetyTool:
         assert result["is_safe"] is True
         assert result["error"] == "boom"
         assert tool.available is False
+
+
+class SubstringModel:
+    """Fake classifier: TOXIC if the part of the text it reads contains
+    ``stupid idiot``, else SAFE. Like toxic-bert it truncates its input
+    (here to the first 500 characters). Records every input."""
+
+    def __init__(self):
+        self.calls = []
+
+    def _read(self, text):
+        return text[:500]
+
+    def predict(self, text):
+        self.calls.append(text)
+        return TOXIC if "stupid idiot" in self._read(text) else SAFE
+
+
+class WordTokenizer:
+    """Stand-in for Detoxify's BERT tokenizer: one token per word."""
+
+    def tokenize(self, text):
+        return text.split()
+
+    def convert_tokens_to_string(self, tokens):
+        return " ".join(tokens)
+
+
+class TokenizingModel(SubstringModel):
+    """Exposes a tokenizer and, like toxic-bert, reads only 510 tokens."""
+
+    def __init__(self):
+        super().__init__()
+        self.tokenizer = WordTokenizer()
+
+    def _read(self, text):
+        return " ".join(text.split()[:510])
+
+
+BENIGN = "Please show me the balance of my savings account. "
+TAIL = "You are a stupid idiot."
+
+
+class TestLongTextChunking:
+    """toxic-bert reads 512 tokens; longer text is classified in windows."""
+
+    def test_short_text_is_classified_whole(self):
+        model = SubstringModel()
+        text = BENIGN * 3 + TAIL
+        result = TextSafetyTool(threshold_high=0.8, model=model).check(text)
+        assert model.calls == [text]
+        assert result["chunks"] == 1
+        assert result["is_safe"] is False
+
+    def test_toxic_tail_after_long_prefix_is_caught_by_characters(self):
+        model = SubstringModel()  # no tokenizer: character windows
+        text = BENIGN * 200 + TAIL  # ~10k characters
+        result = TextSafetyTool(threshold_high=0.8, model=model).check(text)
+        assert result["is_safe"] is False
+        assert result["risk_category"] == "insult"
+        assert result["chunks"] == len(model.calls) > 1
+        assert all(len(c) <= 500 for c in model.calls)
+        # Every character is in at least one window.
+        assert model.calls[0] == text[:500] and text.endswith(model.calls[-1])
+
+    def test_toxic_tail_after_long_prefix_is_caught_by_tokens(self):
+        model = TokenizingModel()
+        text = BENIGN * 200 + TAIL  # ~1600 "tokens"
+        result = TextSafetyTool(threshold_high=0.8, model=model).check(text)
+        assert result["is_safe"] is False
+        assert len(model.calls) > 1
+        assert all(len(c.split()) <= 400 for c in model.calls)
+        assert model.calls[-1].endswith(TAIL)
+
+    def test_phrase_on_a_window_boundary_is_seen_whole(self):
+        model = SubstringModel()
+        text = "x" * 490 + " stupid idiot " + "y" * 600  # straddles char 500
+        assert TextSafetyTool(threshold_high=0.8, model=model).check(text)["is_safe"] is False
+
+    def test_scores_are_max_per_category_over_windows(self):
+        class Alternating:
+            def __init__(self):
+                self.n = 0
+
+            def predict(self, text):
+                self.n += 1
+                return {"toxicity": 0.9 if self.n == 1 else 0.1,
+                        "insult": 0.1 if self.n == 1 else 0.5}
+
+        result = TextSafetyTool(threshold_high=0.95, model=Alternating()).check("z" * 1200)
+        assert result["scores"] == {"toxicity": 0.9, "insult": 0.5}
+        assert result["is_safe"] is True

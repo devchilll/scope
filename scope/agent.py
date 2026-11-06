@@ -1,5 +1,6 @@
 import logging
 from google.adk.agents import LlmAgent
+from google.adk.agents.readonly_context import ReadonlyContext
 from google.genai import types as genai_types
 
 from .config import Config
@@ -27,12 +28,25 @@ if policy.compliance.enabled and policy.compliance.raw_rules:
 # Combine all tools
 ALL_TOOLS = BANKING_TOOLS + OBSERVABILITY_TOOLS
 
+# Custom GOOGLE_COMPLIANCE_RULES (if any) are appended to the instruction
+INSTRUCTION = build_instruction(policy.compliance.transformed_rules)
+
+
+def _instruction(ctx: ReadonlyContext) -> str:
+    """Return the agent instruction verbatim.
+
+    ADK treats a plain-string instruction as a template and replaces
+    ``{name}`` with session state, raising KeyError for unknown names. An
+    InstructionProvider bypasses that, so braces in custom compliance rules
+    reach the model as written. The base instruction uses no templating.
+    """
+    return INSTRUCTION
+
 # Define the root agent
 root_agent = LlmAgent(
     name=configs.agent_settings.name,
     model=configs.agent_settings.model,
-    # Custom GOOGLE_COMPLIANCE_RULES (if any) are appended to the instruction
-    instruction=build_instruction(policy.compliance.transformed_rules),
+    instruction=_instruction,
     tools=ALL_TOOLS,  # Add banking + observability tools
     # Layer 2a: every request is screened by the ML safety check BEFORE the
     # model runs. The explicit safety_check_layer1/2 tools remain for trace

@@ -41,15 +41,19 @@ This directory contains the SQLite database for banking data.
 
 Every agent-facing banking tool (`scope/data/tools.py`) runs as the current
 user and checks that user's role and account ownership through the
-IAM-protected read methods (`get_account`, `get_user_accounts`,
-`get_account_transactions`, `get_escalations`, `resolve_escalation`):
+IAM-protected methods `get_account`, `get_user_accounts` and
+`get_account_transactions`. The escalation tools (`scope/observability_tools.py`)
+reach the IAM-protected `get_escalations` and `resolve_escalation` through
+`EscalationQueue`. Together they give:
 - **USER**: Can only access own accounts, transactions and escalations, and only report fraud on / transfer between own accounts
 - **STAFF**: Can view any customer's accounts and transactions, file fraud reports for customers, and view and resolve all escalations; cannot move customer money
 - **ADMIN**: Same data access as STAFF (its extra config/user-management permissions are not yet used by any tool)
 
 The write helpers (`create_user`, `create_account`, `update_account`,
-`create_transaction`, `create_escalation`, `transfer_funds`) and `get_user` do
-no IAM checks; they are used for seeding and by tools after the tool's own checks.
+`create_transaction`, `create_escalation`, `transfer_funds`) and `get_user` do no IAM checks.
+The write helpers are called by `seed_database.py` and from inside tools
+(the banking tools call them only after their own checks); `get_user` is only
+used by `seed_database.py`.
 
 ## Transfers
 

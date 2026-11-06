@@ -20,15 +20,33 @@ if TYPE_CHECKING:
     from ..escalation.models import EscalationTicket
 
 
+def _parse_metadata(raw: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Parse an escalation's stored metadata JSON.
+
+    Returns the dict, or None if the column is empty, not valid JSON, or
+    not a JSON object, so one malformed row cannot break reading the queue.
+    """
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
 
 class Database:
     """Database manager with IAM-protected operations.
 
-    Methods given an `iam_user` check its role and account ownership
-    (`get_user_accounts` only when one is passed). The write helpers
-    (`create_*`, `update_account`, `transfer_funds`) and `get_user` are
-    internal (used for seeding and by tools after their own checks) and do
-    no IAM checks.
+    Methods given an `iam_user` check its role: `get_account`,
+    `get_user_accounts` (only when one is passed) and
+    `get_account_transactions` also check account ownership,
+    `get_escalations` limits callers without VIEW_ALL_ESCALATIONS to their
+    own tickets, and `resolve_escalation` checks the role only. The write
+    helpers (`create_*`, `update_account`, `transfer_funds`) and `get_user`
+    do no IAM checks; the write helpers are called by the seed script and
+    from inside tools (the banking tools call them only after their own
+    checks), and `get_user` only by the seed script.
 
     Every method opens its own connection and closes it even if a query
     raises, so a failed call cannot leave the database locked.
@@ -593,7 +611,7 @@ class Database:
                 resolution_timestamp=datetime.fromisoformat(row["resolved_at"]) if row["resolved_at"] else None,
                 resolved_by=row["resolved_by"],
                 resolution_note=row["resolution"],
-                metadata=json.loads(row["metadata"]) if row["metadata"] else None
+                metadata=_parse_metadata(row["metadata"])
             )
             for row in rows
         ]

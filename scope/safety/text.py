@@ -9,6 +9,11 @@ A thin wrapper around ``unitary/toxic-bert`` (via Detoxify) that is shared by:
 
 The classifier is loaded lazily on first use so importing this module (and the
 callback) stays cheap, and so unit tests can inject a fake model.
+
+toxic-bert reads at most 512 tokens, and Detoxify silently truncates longer
+input. So that the whole message is classified, longer text is split into
+overlapping windows that each fit, every window is classified, and the
+highest score per category is used.
 """
 
 from __future__ import annotations
@@ -29,6 +34,34 @@ _RISK_LABELS = (
     "obscene",
     "toxicity",
 )
+
+# toxic-bert (bert-base-uncased) reads at most 512 tokens including [CLS] and
+# [SEP]; Detoxify truncates anything after that. Text longer than
+# _MAX_TOKENS is classified in windows of _CHUNK_TOKENS tokens that overlap by
+# _CHUNK_OVERLAP_TOKENS, so a phrase that straddles a window boundary is
+# still seen whole by one window. The window is kept well under the limit
+# because turning tokens back into text and re-tokenizing it can shift the
+# count slightly.
+_MAX_TOKENS = 510
+_CHUNK_TOKENS = 400
+_CHUNK_OVERLAP_TOKENS = 100
+
+# Fallback for a model without an accessible tokenizer: split by characters.
+# BERT's WordPiece yields at most about one token per character for most
+# scripts, so 500-character windows stay under 512 tokens.
+_CHUNK_CHARS = 500
+_CHUNK_OVERLAP_CHARS = 100
+
+
+def _windows(items, size: int, overlap: int) -> list:
+    """Split a sequence into windows of ``size`` that overlap by ``overlap``."""
+    step = size - overlap
+    windows = []
+    for start in range(0, len(items), step):
+        windows.append(items[start:start + size])
+        if start + size >= len(items):
+            break
+    return windows
 
 
 class TextSafetyTool:
@@ -82,15 +115,43 @@ class TextSafetyTool:
         return self._load_error
 
     # ------------------------------------------------------------------ check
+    def chunks(self, text: str) -> list:
+        """Split ``text`` into pieces the classifier reads in full.
+
+        Text that fits in the model's 512-token input is returned as is.
+        Longer text is split into overlapping windows: by tokens when the
+        model exposes its tokenizer (Detoxify does), otherwise by characters.
+        """
+        model = self.model
+        tokenizer = getattr(model, "tokenizer", None)
+        if tokenizer is not None and hasattr(tokenizer, "tokenize") and hasattr(
+            tokenizer, "convert_tokens_to_string"
+        ):
+            tokens = tokenizer.tokenize(text)
+            if len(tokens) <= _MAX_TOKENS:
+                return [text]
+            return [
+                tokenizer.convert_tokens_to_string(window)
+                for window in _windows(tokens, _CHUNK_TOKENS, _CHUNK_OVERLAP_TOKENS)
+            ]
+        if len(text) <= _CHUNK_CHARS:
+            return [text]
+        return _windows(text, _CHUNK_CHARS, _CHUNK_OVERLAP_CHARS)
+
     def check(self, text: str) -> dict:
         """Classify ``text``.
 
         Returns a dict with:
             is_safe (bool), risk_category (str), confidence (float),
-            scores (dict[str, float]), model (str), checked (bool).
+            scores (dict[str, float]), model (str), checked (bool),
+            chunks (int: how many windows were classified).
 
-        ``checked`` is False when the classifier could not run; callers decide
-        whether to fail open or closed.
+        Long text is classified in overlapping windows (see ``chunks``); each
+        category's score is its highest score over all windows.
+
+        ``checked`` is False when the classifier could not be loaded; callers
+        decide whether to fail open or closed. Errors raised while classifying
+        propagate to the caller.
         """
         if not text or not text.strip():
             return self._result(True, "none", 0.0, {}, checked=True)
@@ -101,8 +162,12 @@ class TextSafetyTool:
                 True, "none", 0.0, {}, checked=False, error=self._load_error
             )
 
-        raw: Mapping[str, Any] = model.predict(text)
-        scores = {k: float(v) for k, v in raw.items()}
+        pieces = self.chunks(text)
+        scores: dict = {}
+        for piece in pieces:
+            raw: Mapping[str, Any] = model.predict(piece)
+            for label, value in raw.items():
+                scores[label] = max(scores.get(label, 0.0), float(value))
 
         is_safe = True
         risk_category = "none"
@@ -121,7 +186,10 @@ class TextSafetyTool:
         if is_safe:
             confidence = max(scores.values()) if scores else 0.0
 
-        return self._result(is_safe, risk_category, confidence, scores, checked=True)
+        return self._result(
+            is_safe, risk_category, confidence, scores, checked=True,
+            chunks=len(pieces),
+        )
 
     @staticmethod
     def _result(
@@ -132,6 +200,7 @@ class TextSafetyTool:
         *,
         checked: bool,
         error: Optional[str] = None,
+        chunks: int = 0,
     ) -> dict:
         result = {
             "is_safe": is_safe,
@@ -140,6 +209,7 @@ class TextSafetyTool:
             "scores": scores,
             "model": MODEL_NAME,
             "checked": checked,
+            "chunks": chunks,
         }
         if error:
             result["error"] = error

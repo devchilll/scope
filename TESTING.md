@@ -61,15 +61,19 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 - ✅ ImageSafetyTool initialization
 - ✅ Output format validation
 - ✅ A failed image check returns an unknown result (`checked: false`), never "safe"
-- ✅ TextSafetyTool: safe / toxic / severe-toxicity / threshold / empty input / model unavailable
+- ✅ TextSafetyTool: safe / toxic / severe-toxicity / threshold / empty input / model unavailable /
+  long text classified in overlapping windows, max score per category
   (`scope/safety/tests/test_text_safety.py`, fake model - no download)
 
 ### Pre-model safety gate (`tests/test_callbacks.py`)
-- ✅ Only the latest user turn is screened (model turns ignored)
+- ✅ The new message is screened, whatever role the client gave it; without text, the latest user turn
 - ✅ Safe input continues to the LLM
 - ✅ Toxic input returns a refusal `LlmResponse` before the model is called
 - ✅ Screened and logged once per turn; the decision applies to every model call of that turn (tool loop)
 - ✅ Blocked text is withheld from later model requests (unit + end-to-end through ADK's runner with a fake LLM)
+- ✅ Blocked hashes come from the refusal events' `custom_metadata`; wiping the state copy (`state_delta`, state-only event) doesn't bring the text back
+- ✅ A client-supplied `temp:scope_safety_gate_decision` can't make a toxic message pass
+- ✅ Screening error → request refused, text withheld from later turns
 - ✅ `scope.pre_model_safety_gate` span with blocked / max-score attributes
 - ✅ Model unavailable → logged, fails open to Layer 2b
 - ✅ `GOOGLE_SAFETY_USE_ML_MODELS=false` → classifier skipped (logged), in the callback and the `safety_check_layer1` tool
@@ -117,6 +121,7 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 - ✅ Resolve ticket (ADMIN)
 - ✅ Resolve ticket allowed (STAFF), denied (USER)
 - ✅ Ticket metadata stored and read back (and NULL → None)
+- ✅ Malformed metadata (invalid JSON or not an object) reads back as None without breaking the queue
 - ✅ Queue statistics
 - ✅ Default database location
 - ✅ Custom database location
@@ -136,12 +141,12 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 - ⏭️ End-to-end flows (skipped - requires LLM calls)
 
 ### Escalation & config wiring (`tests/test_escalation_config.py`)
-- ✅ Decision prompt uses `GOOGLE_ESCALATION_THRESHOLD` (default 0.6) and the configured model
+- ✅ Decision prompt uses `GOOGLE_ESCALATION_THRESHOLD` (default 0.6) for both the escalate and approve conditions, and the configured model
 - ✅ `GOOGLE_GENAI_USE_VERTEXAI` selects Vertex AI or the Gemini API client
 - ✅ `create_escalation_ticket` stores the Layer 2b confidence (default 0.0, clamped to 0-1)
-- ✅ COMP-004: transfers above `high_value_amount` are not executed and create a ticket; at the limit they execute; the limit follows the YAML value
+- ✅ COMP-004: transfers above `high_value_amount` are not executed and create a ticket; at the limit they execute; the limit follows the YAML value; an over-limit transfer from an account the caller does not own is refused without a ticket
 - ✅ `report_fraud` ticket metadata is persisted
-- ✅ `GOOGLE_COMPLIANCE_RULES` appended to the agent instruction (unchanged when empty)
+- ✅ `GOOGLE_COMPLIANCE_RULES` appended to the agent instruction (unchanged when empty); rules set in the environment, including braces, appear verbatim in the system instruction produced by ADK's instruction processing
 
 ### Transfers (`tests/test_transfer_validation.py`)
 - ✅ Same-account transfers rejected (tool and database), no balance change
