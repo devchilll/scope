@@ -18,6 +18,7 @@ scope/
     └── test_escalation.py      # Queue, tickets, SQLite (14 tests)
 
 tests/
+├── test_audit_logging.py       # Tool-call audit callback, daily rollover, log viewing
 ├── test_callbacks.py           # Pre-model safety gate (before_model_callback)
 └── test_agent_integration.py   # Agentic system integration
 ```

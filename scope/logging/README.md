@@ -5,8 +5,12 @@ This directory contains the audit logging system for SCOPE, which tracks all use
 ## Components
 
 - **`audit.py`** - Core audit logging functionality
+- **`compliance_log.py`** - PCI-DSS / SOC2 compliance event logging (see `OBSERVABILITY.md` for which categories the agent writes today)
 - **`view_logs.py`** - Terminal-based log viewer and analyzer
-- **`audit_logs/`** - Directory containing daily log files (JSONL format)
+- **`audit_logs/`** - Directory containing daily audit log files (JSONL format)
+- **`compliance_logs/`** - Directory containing daily `pci_dss_*` / `soc2_*` log files (JSONL format)
+
+The dated file name is resolved on every write, so a long-running process rolls over to a new file at midnight.
 
 ## Log Format
 
@@ -36,7 +40,8 @@ Logs are stored in JSONL (JSON Lines) format, with one JSON object per line:
 
 ## Event Types
 
-- **`user_query`** - User requests and agent responses
+- **`user_query`** - User input, safety checks/decisions, and model responses
+- **`tool_call`** - One event per tool invocation (`after_tool_callback`): tool name, redacted/truncated arguments, role, success or error
 - **`account_access`** - Account balance and information access
 - **`transaction_query`** - Transaction history queries
 - **`safety_block`** - Requests blocked by safety system
@@ -109,9 +114,9 @@ python view_logs.py -s
 ### Real-Time Monitoring
 
 ```bash
-# Follow mode (like tail -f)
+# Follow mode (like tail -f); --user / --action / --event filters apply
 python view_logs.py --follow
-python view_logs.py -f
+python view_logs.py -f --event tool_call
 
 # Follow with verbose output
 python view_logs.py --follow --verbose
@@ -228,7 +233,7 @@ The log viewer uses colors to make information easier to scan:
 - **Yellow** - Safety checks and warnings
 - **Blue** - Account access
 - **Magenta** - Transactions
-- **Red background** - Safety blocks
+- **Red** - Safety blocks
 - **Green** - Approved decisions
 - **Red** - Rejected decisions
 
@@ -263,7 +268,7 @@ The log viewer uses colors to make information easier to scan:
 
 The audit logging system captures:
 
-- **WHO**: User ID and role
+- **WHO**: User ID on every event; the role as well on `tool_call` events
 - **WHAT**: Action performed
 - **WHEN**: Timestamp (ISO format)
 - **WHY**: Reasoning and analysis from safety system

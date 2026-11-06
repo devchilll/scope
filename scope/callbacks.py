@@ -16,6 +16,7 @@ and runs on *every* LLM request, before the model acts. It:
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Optional
 
@@ -176,9 +177,24 @@ def fast_guardrail_callback(
 def after_model_callback(
     callback_context: CallbackContext,
     llm_response: LlmResponse,
-) -> LlmResponse:
-    """Runs after the LLM generates a response; logs it for the audit trail."""
+) -> Optional[LlmResponse]:
+    """Runs after the LLM generates a response; logs it for the audit trail.
+
+    Records the response text (truncated to 500 chars) and the names of any
+    tools the model asked to call. The text is not redacted: if the model
+    repeats data from a tool response (e.g. a balance), that data is logged.
+
+    Returns ``None``: ADK treats a non-``None`` return as a replacement
+    response, so the model's response is passed on unchanged.
+    """
     audit = get_audit_logger()
+
+    content = getattr(llm_response, "content", None)
+    parts = (getattr(content, "parts", None) or []) if content else []
+    text = "".join(p.text for p in parts if getattr(p, "text", None))
+    function_calls = [
+        p.function_call.name for p in parts if getattr(p, "function_call", None)
+    ]
 
     audit.log_event(
         event_type=AuditEventType.USER_QUERY,
@@ -187,8 +203,123 @@ def after_model_callback(
         details={
             "model": Config().agent_settings.model,
             "response_received": llm_response is not None,
+            "text": text[:500],  # Truncated for log size; not redacted
+            "function_calls": function_calls,
         },
     )
 
     logger.info("[SCOPE After LLM] Response logged")
-    return llm_response
+    return None
+
+
+# --- Tool-call audit trail ---------------------------------------------------
+
+# Argument names whose values are never copied into the audit trail.
+_SENSITIVE_ARG_MARKERS = ("password", "secret", "token", "api_key", "ssn", "card")
+_MAX_LOGGED_CHARS = 200
+
+# String tool responses that start with one of these (after leading
+# whitespace) are error / denial messages.
+_TOOL_ERROR_PREFIXES = ("Error", "❌", "⚠️ Failed")
+
+
+def _summarize_tool_args(args: Optional[dict]) -> dict:
+    """Copy tool arguments for the audit log without dumping them wholesale.
+
+    Values of sensitive-looking keys are redacted, long strings are truncated,
+    and non-scalar values are replaced by their type name.
+    """
+    summary = {}
+    for key, value in (args or {}).items():
+        if any(marker in key.lower() for marker in _SENSITIVE_ARG_MARKERS):
+            summary[key] = "[REDACTED]"
+        elif isinstance(value, str):
+            summary[key] = (
+                value if len(value) <= _MAX_LOGGED_CHARS
+                else value[:_MAX_LOGGED_CHARS] + "..."
+            )
+        elif value is None or isinstance(value, (bool, int, float)):
+            summary[key] = value
+        else:
+            summary[key] = f"<{type(value).__name__}>"
+    return summary
+
+
+def _tool_response_error(tool_response) -> Optional[str]:
+    """Return the error text if a tool response reports a failure, else None.
+
+    A response counts as a failure when it is:
+
+    * a string starting with one of ``_TOOL_ERROR_PREFIXES``;
+    * a dict with a non-empty ``"error"`` value; or
+    * a string holding a JSON object with a non-empty ``"error"`` value.
+
+    Anything else (including "not found" style replies) counts as success.
+    """
+    if isinstance(tool_response, str):
+        stripped = tool_response.strip()
+        if stripped.startswith(_TOOL_ERROR_PREFIXES):
+            return stripped[:_MAX_LOGGED_CHARS]
+        if stripped.startswith("{"):
+            try:
+                tool_response = json.loads(stripped)
+            except ValueError:
+                return None
+    if isinstance(tool_response, dict) and tool_response.get("error"):
+        return str(tool_response["error"])[:_MAX_LOGGED_CHARS]
+    return None
+
+
+def _current_user_role() -> str:
+    try:
+        return Config().IAM_CURRENT_USER_ROLE
+    except Exception:  # pragma: no cover - config should always load
+        return "unknown"
+
+
+def audit_tool_call_callback(tool, args: dict, tool_context, tool_response):
+    """``after_tool_callback``: write one ``tool_call`` audit event per tool run.
+
+    Logs the tool name, a redacted / truncated copy of its arguments, the user
+    ID and role, and whether the tool reported an error. The tool's response
+    body is not copied into this event (only its length); tools log their own
+    domain events. This is not a privacy guarantee for the audit trail as a
+    whole: the ``llm_response`` event logs up to 500 chars of model text, which
+    may repeat data from the tool response.
+
+    Never raises: a logging failure is reported through Python's ``logging``
+    module. Returns ``None`` so the tool's response reaches the model
+    unchanged.
+    """
+    try:
+        error = _tool_response_error(tool_response)
+        get_audit_logger().log_tool_call(
+            user_id=_current_user_id(),
+            role=_current_user_role(),
+            tool_name=getattr(tool, "name", str(tool)),
+            parameters=_summarize_tool_args(args),
+            result=None if error else f"returned {len(str(tool_response))} chars",
+            error=error,
+        )
+    except Exception:
+        logger.exception("[SCOPE Audit] Failed to log tool call")
+    return None
+
+
+def audit_tool_error_callback(tool, args: dict, tool_context, error: Exception):
+    """``on_tool_error_callback``: log a tool call that raised an exception.
+
+    Never raises: a logging failure is reported through Python's ``logging``
+    module. Returns ``None`` so ADK still surfaces the original exception.
+    """
+    try:
+        get_audit_logger().log_tool_call(
+            user_id=_current_user_id(),
+            role=_current_user_role(),
+            tool_name=getattr(tool, "name", str(tool)),
+            parameters=_summarize_tool_args(args),
+            error=f"{type(error).__name__}: {error}"[:_MAX_LOGGED_CHARS],
+        )
+    except Exception:
+        logger.exception("[SCOPE Audit] Failed to log tool error")
+    return None

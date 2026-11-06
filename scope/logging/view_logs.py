@@ -185,27 +185,37 @@ def format_log_entry(entry: Dict, verbose: bool = False) -> str:
     return line
 
 
-def read_logs(log_file: Path, 
+def matches_filters(entry: Dict,
+                    user_filter: Optional[str] = None,
+                    action_filter: Optional[str] = None,
+                    event_filter: Optional[str] = None) -> bool:
+    """Return True if a log entry passes the user / action / event filters."""
+    if user_filter and entry.get('user_id') != user_filter:
+        return False
+    if action_filter and action_filter not in entry.get('action', ''):
+        return False
+    if event_filter and entry.get('event_type') != event_filter:
+        return False
+    return True
+
+
+def read_logs(log_file: Path,
               user_filter: Optional[str] = None,
               action_filter: Optional[str] = None,
               event_filter: Optional[str] = None,
               tail: Optional[int] = None) -> List[Dict]:
     """Read and filter log entries."""
     entries = []
-    
+
     with open(log_file, 'r') as f:
         for line in f:
             try:
                 entry = json.loads(line.strip())
-                
+
                 # Apply filters
-                if user_filter and entry.get('user_id') != user_filter:
+                if not matches_filters(entry, user_filter, action_filter, event_filter):
                     continue
-                if action_filter and action_filter not in entry.get('action', ''):
-                    continue
-                if event_filter and entry.get('event_type') != event_filter:
-                    continue
-                
+
                 entries.append(entry)
             except json.JSONDecodeError:
                 continue
@@ -255,8 +265,11 @@ def print_summary(entries: List[Dict]):
     print()
 
 
-def follow_logs(log_file: Path, verbose: bool = False):
-    """Follow log file in real-time (like tail -f)."""
+def follow_logs(log_file: Path, verbose: bool = False,
+                user_filter: Optional[str] = None,
+                action_filter: Optional[str] = None,
+                event_filter: Optional[str] = None):
+    """Follow log file in real-time (like tail -f), applying the same filters."""
     print(f"{Colors.BOLD}Following {log_file.name}... (Ctrl+C to stop){Colors.RESET}\n")
     
     # Read existing entries first
@@ -269,7 +282,8 @@ def follow_logs(log_file: Path, verbose: bool = False):
                 if line:
                     try:
                         entry = json.loads(line.strip())
-                        print(format_log_entry(entry, verbose))
+                        if matches_filters(entry, user_filter, action_filter, event_filter):
+                            print(format_log_entry(entry, verbose))
                     except json.JSONDecodeError:
                         pass
                 else:
@@ -314,7 +328,10 @@ Examples:
     
     # Follow mode
     if args.follow:
-        follow_logs(log_file, args.verbose)
+        follow_logs(log_file, args.verbose,
+                    user_filter=args.user,
+                    action_filter=args.action,
+                    event_filter=args.event)
         return
     
     # Read and filter logs

@@ -4,11 +4,11 @@ This module provides specialized logging for PCI-DSS, SOC2, and other
 regulatory compliance requirements.
 """
 
-import logging
 from datetime import datetime
 from typing import Optional, Dict, Any
 from pathlib import Path
-import json
+
+from .audit import append_daily_jsonl
 
 
 class ComplianceLogger:
@@ -25,71 +25,45 @@ class ComplianceLogger:
         else:
             log_dir = Path(log_dir)
         
-        log_dir.mkdir(exist_ok=True)
+        log_dir.mkdir(parents=True, exist_ok=True)
         self.log_dir = log_dir
-        
-        # Create separate log files for different compliance frameworks
-        today = datetime.now().strftime("%Y-%m-%d")
-        
+
+        # Separate daily files per compliance framework. These are file-name
+        # prefixes; the dated file is resolved on every write (see
+        # append_daily_jsonl), so the logs roll over at midnight.
+
         # PCI-DSS log (Payment Card Industry Data Security Standard)
-        self.pci_logger = self._create_logger(
-            "scope.compliance.pci",
-            log_dir / f"pci_dss_{today}.jsonl"
-        )
-        
+        self.pci_logger = "pci_dss"
+
         # SOC2 log (Service Organization Control 2)
-        self.soc2_logger = self._create_logger(
-            "scope.compliance.soc2",
-            log_dir / f"soc2_{today}.jsonl"
-        )
-        
+        self.soc2_logger = "soc2"
+
         # General compliance log
-        self.general_logger = self._create_logger(
-            "scope.compliance.general",
-            log_dir / f"compliance_{today}.jsonl"
-        )
-    
-    def _create_logger(self, name: str, log_file: Path) -> logging.Logger:
-        """Create a logger with file handler.
-        
-        Args:
-            name: Logger name
-            log_file: Log file path
-            
-        Returns:
-            Configured logger
-        """
-        logger = logging.getLogger(name)
-        logger.setLevel(logging.INFO)
-        
-        handler = logging.FileHandler(log_file)
-        handler.setLevel(logging.INFO)
-        logger.addHandler(handler)
-        
-        return logger
-    
+        self.general_logger = "compliance"
+
     def _log_event(
         self,
-        logger: logging.Logger,
+        logger: str,
         event_type: str,
         user_id: str,
         details: Dict[str, Any]
     ):
         """Log a compliance event.
-        
+
         Args:
-            logger: Logger to use
+            logger: File prefix of the target log (pci_dss, soc2, compliance)
             event_type: Type of compliance event
             user_id: User ID
             details: Event details
         """
+        now = datetime.now()
         event = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": now.isoformat(),
             "event_type": event_type,
             "user_id": user_id,
             "details": details
         }
-        logger.info(json.dumps(event))
+        append_daily_jsonl(self.log_dir, logger, event, when=now)
     
     # PCI-DSS Logging
     

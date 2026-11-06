@@ -98,6 +98,7 @@ def safety_check_layer2(user_input: str) -> str:
             "risk_factors": [...],
             "analysis": "..."
         }
+        If the analysis fails, the scores are 0.0 and an "error" key is added.
     """
     # Create the Layer 2 safety analysis prompt
     layer2_prompt = f"""You are a safety and compliance analyzer for a banking customer service agent.
@@ -185,7 +186,8 @@ Return ONLY the JSON object, no other text.
             "confidence": 0.0,
             "violated_rules": [],
             "risk_factors": ["analysis_error"],
-            "analysis": f"Error during safety analysis: {str(e)}. Unable to complete analysis."
+            "analysis": f"Error during safety analysis: {str(e)}. Unable to complete analysis.",
+            "error": str(e),
         }
         return json.dumps(error_response, indent=2)
 
@@ -212,6 +214,8 @@ def make_safe_and_compliant_decision(safety_analysis: dict) -> str:
             "params": {...},
             "reasoning": "..."
         }
+        If decision making fails, the action is "escalate" and an "error" key
+        is added.
     """
     decision_prompt = f"""You are a decision maker for a banking customer service agent.
 
@@ -295,7 +299,8 @@ Return ONLY the JSON object, no other text.
         error_response = {
             "action": "escalate",
             "params": {},
-            "reasoning": f"Error during decision making: {str(e)}. Escalating for human review."
+            "reasoning": f"Error during decision making: {str(e)}. Escalating for human review.",
+            "error": str(e),
         }
         return json.dumps(error_response, indent=2)
 
@@ -455,7 +460,7 @@ def log_agent_response(response_summary: str, full_response: str = "", model_use
     """
     try:
         # Log the LLM response
-        audit_logger.log_event(
+        written = audit_logger.log_event(
             event_type=AuditEventType.USER_QUERY,
             user_id=config.IAM_CURRENT_USER_ID,
             action="llm_response",
@@ -466,7 +471,9 @@ def log_agent_response(response_summary: str, full_response: str = "", model_use
                 "full_response": full_response[:2000] if full_response else None  # Limit to 2000 chars for log size
             }
         )
-        
+        if not written:
+            return "⚠️ Failed to log response: the audit log could not be written"
+
         return f"✅ Response logged successfully for audit trail (model: {model_used})"
     except Exception as e:
         # Return error but don't crash
@@ -484,7 +491,8 @@ def view_audit_logs(limit: int = 10, event_type: Optional[str] = None) -> str:
         event_type: Optional filter by event type (e.g., "user_query", "account_access")
         
     Returns:
-        Formatted string with recent audit log entries
+        Formatted string with the newest `limit` entries of the most recent
+        daily audit log file, newest first
     """
     # Check permissions
     try:
@@ -496,43 +504,53 @@ def view_audit_logs(limit: int = 10, event_type: Optional[str] = None) -> str:
         
         # Check permissions
         from .iam import AccessControl, Permission
+        from collections import deque
+        from .logging import get_compliance_logger
         try:
             AccessControl.check_permission(current_user, Permission.VIEW_LOGS)
+            granted = True
         except Exception:
+            granted = False
+
+        # SOC2 CC6.1: record the access-control decision either way
+        get_compliance_logger().log_soc2_access_control(
+            user_id=current_user.user_id,
+            resource="audit_logs",
+            permission=Permission.VIEW_LOGS.value,
+            granted=granted
+        )
+        if not granted:
             return "❌ Permission denied: You do not have permission to view audit logs"
-        
+
         # Limit the number of entries
-        limit = min(limit, 200)
-        
+        limit = max(1, min(limit, 200))
+
         # Read the most recent log file
         log_dir = audit_logger.log_dir
         log_files = sorted(log_dir.glob("audit_*.jsonl"), reverse=True)
-        
+
         if not log_files:
             return "📋 No audit logs found"
-        
-        # Read entries from the most recent file
-        entries = []
+
+        # Keep only the last `limit` matching entries of the most recent file
+        entries = deque(maxlen=limit)
         with open(log_files[0], 'r') as f:
             for line in f:
                 if not line.strip():
                     continue
                 try:
                     entry = json.loads(line)
-                    
+
                     # Filter by event type if specified
                     if event_type and entry.get('event_type') != event_type:
                         continue
-                    
+
                     entries.append(entry)
-                    
-                    if len(entries) >= limit:
-                        break
                 except json.JSONDecodeError:
                     continue
-        
-        # Return the most recent entries (reverse order - newest first)
-        entries.reverse()
+
+        # Return the most recent entries (newest first)
+        entries = list(reversed(entries))
         
         if not entries:
             if event_type:

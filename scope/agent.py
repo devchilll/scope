@@ -5,6 +5,7 @@ from google.genai import types as genai_types
 from .config import Config
 from .prompt import ROUTER_INSTRUCTIONS
 from .callbacks import fast_guardrail_callback, after_model_callback
+from .callbacks import audit_tool_call_callback, audit_tool_error_callback
 from .compliance import transform_rules
 from .data.tools import BANKING_TOOLS
 from .observability_tools import OBSERVABILITY_TOOLS
@@ -37,6 +38,9 @@ root_agent = LlmAgent(
     # visibility and Layer 2b (LLM contextual) checks.
     before_model_callback=fast_guardrail_callback,
     after_model_callback=after_model_callback,
+    # Every tool invocation (including errors) gets a tool_call audit event.
+    after_tool_callback=audit_tool_call_callback,
+    on_tool_error_callback=audit_tool_error_callback,
     generate_content_config=genai_types.GenerateContentConfig(
         temperature=0.7,  # More natural responses
         # Removed response_mime_type - let agent respond naturally

@@ -4,12 +4,57 @@ This module provides comprehensive audit logging for all agent actions,
 tool calls, and database operations for compliance (PCI-DSS, SOC2).
 """
 
-import logging
 import json
+import logging
+import threading
 from datetime import datetime
 from typing import Optional, Dict, Any
 from pathlib import Path
 from enum import Enum
+
+
+logger = logging.getLogger(__name__)
+
+_write_lock = threading.Lock()
+
+
+def append_daily_jsonl(
+    log_dir: Path,
+    prefix: str,
+    record: Dict[str, Any],
+    when: Optional[datetime] = None,
+) -> Optional[Path]:
+    """Append one JSON record to ``<log_dir>/<prefix>_YYYY-MM-DD.jsonl``.
+
+    The file name is resolved on every write from ``when`` (default: now), so a
+    long-running process such as ``adk web`` rolls over to a new file at
+    midnight instead of writing to the file of the day it started. The
+    directory is (re)created on every write, so deleting it while the process
+    runs does not stop logging.
+
+    Logging is fail-open: if the record cannot be serialized or written, the
+    failure is reported through Python's ``logging`` module and this function
+    returns ``None`` instead of raising, so an audit-log failure never changes
+    the outcome of the tool or callback that triggered it. Values that are not
+    JSON-serializable are written as ``str(value)``.
+
+    Returns:
+        Path of the file the record was written to, or ``None`` if the write
+        failed
+    """
+    when = when or datetime.now()
+    log_dir = Path(log_dir)
+    log_file = log_dir / f"{prefix}_{when.strftime('%Y-%m-%d')}.jsonl"
+    try:
+        line = json.dumps(record, default=str)
+        with _write_lock:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+    except (OSError, TypeError, ValueError):
+        logger.exception("Failed to write log record to %s", log_file)
+        return None
+    return log_file
 
 
 class AuditEventType(Enum):
@@ -40,22 +85,15 @@ class AuditLogger:
         else:
             log_dir = Path(log_dir)
         
-        log_dir.mkdir(exist_ok=True)
+        log_dir.mkdir(parents=True, exist_ok=True)
+        # One file per day: the dated file is resolved on every write (see
+        # append_daily_jsonl), so the log rolls over at midnight.
         self.log_dir = log_dir
-        
-        # Create rotating log file (one per day)
-        today = datetime.now().strftime("%Y-%m-%d")
-        log_file = log_dir / f"audit_{today}.jsonl"
-        
-        # Configure logger
-        self.logger = logging.getLogger("scope.audit")
-        self.logger.setLevel(logging.INFO)
-        
-        # File handler for JSON logs
-        handler = logging.FileHandler(log_file)
-        handler.setLevel(logging.INFO)
-        self.logger.addHandler(handler)
-    
+
+    def current_log_file(self) -> Path:
+        """Path of the file today's events are written to."""
+        return self.log_dir / f"audit_{datetime.now().strftime('%Y-%m-%d')}.jsonl"
+
     def log_event(
         self,
         event_type: AuditEventType,
@@ -65,8 +103,10 @@ class AuditLogger:
         success: bool = True,
         error: Optional[str] = None,
         session_id: Optional[str] = None
-    ):
+    ) -> bool:
         """Log an audit event.
+
+        Never raises on a write failure (see ``append_daily_jsonl``).
         
         Args:
             event_type: Type of event
@@ -76,9 +116,13 @@ class AuditLogger:
             success: Whether the action succeeded
             error: Error message if action failed
             session_id: Optional session ID to group related events
+
+        Returns:
+            True if the event was written, False if the write failed
         """
+        now = datetime.now()
         event = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": now.isoformat(),
             "event_type": event_type.value,
             "user_id": user_id,
             "action": action,
@@ -92,8 +136,8 @@ class AuditLogger:
         if error:
             event["error"] = error
         
-        # Log as JSON for structured logging
-        self.logger.info(json.dumps(event))
+        # Log as JSON for structured logging (one event per line)
+        return append_daily_jsonl(self.log_dir, "audit", event, when=now) is not None
     
     def log_user_query(self, user_id: str, query: str, response_action: str):
         """Log a user query and agent response.
@@ -155,26 +199,32 @@ class AuditLogger:
         tool_name: str, 
         parameters: Dict[str, Any],
         result: Optional[str] = None,
-        error: Optional[str] = None
+        error: Optional[str] = None,
+        role: Optional[str] = None
     ):
         """Log a tool call.
-        
+
         Args:
             user_id: User ID
             tool_name: Name of the tool called
             parameters: Tool parameters
             result: Tool result summary
             error: Error message if tool failed
+            role: Role the tool ran as (e.g. USER, STAFF, ADMIN)
         """
+        details = {
+            "tool_name": tool_name,
+            "parameters": parameters,
+            "result": result
+        }
+        if role:
+            details["role"] = role
+
         self.log_event(
             event_type=AuditEventType.TOOL_CALL,
             user_id=user_id,
             action=f"tool_call_{tool_name}",
-            details={
-                "tool_name": tool_name,
-                "parameters": parameters,
-                "result": result
-            },
+            details=details,
             success=error is None,
             error=error
         )
