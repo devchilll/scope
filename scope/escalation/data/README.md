@@ -32,5 +32,11 @@ queue = EscalationQueue()                      # shares the banking database
 queue = EscalationQueue(Database("custom.db")) # custom location (tests)
 ```
 
-All queue operations are IAM-protected: USER sees own tickets, STAFF/ADMIN see
-and resolve all tickets.
+Viewing and resolving are IAM-protected: USER sees own tickets, STAFF/ADMIN see
+and resolve all tickets. `add_ticket` has no permission check; tickets are
+created by the agent's own tools (`create_escalation_ticket`, `report_fraud`,
+and `transfer_money` for COMP-004 high-value transfers).
+
+`metadata` holds a JSON object when the creating tool supplies one (e.g.
+`{"account_id": "acc001", "type": "fraud_report"}`) and is read back as
+`EscalationTicket.metadata`; otherwise it is NULL.

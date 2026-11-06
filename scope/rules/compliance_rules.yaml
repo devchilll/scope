@@ -82,5 +82,6 @@ compliance_rules:
 
 # Configuration for compliance thresholds
 thresholds:
-  high_value_amount: 10000.0  # USD threshold for escalation
-  require_human_review: true  # Whether to require human review for violations
+  # COMP-004: transfer_money does not execute transfers above this amount (USD);
+  # it creates an escalation ticket for human review instead
+  high_value_amount: 10000.0

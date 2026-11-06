@@ -53,8 +53,8 @@ TOOL_DEFINITIONS = {
         "title": "Transfer Money Between Accounts",
         "tool": "transfer_money(from_account_id, to_account_id, amount, description=None)",
         "notes": {
-            "USER": ["Transfer between your own accounts only", "Validates ownership and sufficient balance"],
-            "STAFF_ADMIN": ["Transfer between your own accounts only", "Note: Cannot transfer on behalf of customers"]
+            "USER": ["Transfer between your own accounts only", "Validates ownership and sufficient balance", "Transfers over the COMP-004 high-value limit are NOT executed; an escalation ticket is created for staff review"],
+            "STAFF_ADMIN": ["Transfer between your own accounts only", "Note: Cannot transfer on behalf of customers", "Transfers over the COMP-004 high-value limit are NOT executed; an escalation ticket is created for staff review"]
         }
     },
     
@@ -80,8 +80,8 @@ TOOL_DEFINITIONS = {
     "create_escalation": {
         "permissions": [Permission.USE_AGENT],
         "title": "Create Escalation Ticket (REQUIRED if action=\"escalate\" else skip)",
-        "tool": "create_escalation_ticket(user_input, reasoning)",
-        "notes": ["Use this when make_safe_and_compliant_decision returns \"escalate\""]
+        "tool": "create_escalation_ticket(user_input, reasoning, confidence)",
+        "notes": ["Use this when make_safe_and_compliant_decision returns \"escalate\"", "confidence: the `confidence` value from the safety_check_layer2 JSON"]
     },
     "log_response": {
         "permissions": [Permission.USE_AGENT],
@@ -299,7 +299,7 @@ Based on the `action` from Step 3:
 
 **If action = "escalate":**
 - DO NOT process the request yourself
-- Call `create_escalation_ticket(user_input="<original user request>", reasoning="<reasoning from JSON>")`
+- Call `create_escalation_ticket(user_input="<original user request>", reasoning="<reasoning from JSON>", confidence=<confidence from the Step 2 analysis>)`
 - Note the ticket ID for your response
 - **DO NOT respond yet** - wait for Step 5
 
@@ -372,4 +372,18 @@ Based on the `action` from Step 3:
 - Use simple, clear language
 - Be empathetic and professional
 """
+
+
+def build_instruction(transformed_rules=None) -> str:
+    """Return the agent instruction, with any custom compliance rules appended.
+
+    Args:
+        transformed_rules: Agent-ready rules from ``transform_rules``
+            (``GOOGLE_COMPLIANCE_RULES``). Empty or None leaves the
+            instruction unchanged.
+
+    Returns:
+        ROUTER_INSTRUCTIONS followed by the formatted COMPLIANCE PRINCIPLES section
+    """
+    return ROUTER_INSTRUCTIONS + format_compliance_section(transformed_rules or [])
 

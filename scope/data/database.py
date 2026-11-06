@@ -513,7 +513,8 @@ class Database:
                 status=row["status"],
                 resolution_timestamp=datetime.fromisoformat(row["resolved_at"]) if row["resolved_at"] else None,
                 resolved_by=row["resolved_by"],
-                resolution_note=row["resolution"]
+                resolution_note=row["resolution"],
+                metadata=json.loads(row["metadata"]) if row["metadata"] else None
             )
             for row in rows
         ]

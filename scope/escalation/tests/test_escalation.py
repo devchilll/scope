@@ -122,6 +122,27 @@ class TestEscalationQueue:
         with pytest.raises(AccessDeniedException):
             test_queue.resolve_ticket(user, ticket_id, "Test")
     
+    def test_metadata_round_trip(self, test_queue):
+        """Ticket metadata is stored in the metadata column and read back."""
+        ticket = EscalationTicket(
+            user_id="user",
+            input_text="Fraud report for account acc001: unknown charge",
+            agent_reasoning="Fraud report",
+            confidence=1.0,
+            metadata={"account_id": "acc001", "type": "fraud_report"}
+        )
+        test_queue.add_ticket(ticket)
+
+        staff = User("staff1", UserRole.STAFF)
+        stored = [t for t in test_queue.view_tickets(staff) if t.id == ticket.id][0]
+        assert stored.metadata == {"account_id": "acc001", "type": "fraud_report"}
+
+    def test_metadata_defaults_to_none(self, test_queue, sample_ticket):
+        """Tickets without metadata read back as None."""
+        test_queue.add_ticket(sample_ticket)
+        staff = User("staff1", UserRole.STAFF)
+        assert test_queue.view_tickets(staff)[0].metadata is None
+
     def test_get_stats(self, test_queue, sample_ticket):
         """Test queue statistics."""
         test_queue.add_ticket(sample_ticket)

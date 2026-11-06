@@ -3,7 +3,7 @@ from google.adk.agents import LlmAgent
 from google.genai import types as genai_types
 
 from .config import Config
-from .prompt import ROUTER_INSTRUCTIONS
+from .prompt import build_instruction
 from .callbacks import fast_guardrail_callback, after_model_callback
 from .callbacks import audit_tool_call_callback, audit_tool_error_callback
 from .compliance import transform_rules
@@ -31,7 +31,8 @@ ALL_TOOLS = BANKING_TOOLS + OBSERVABILITY_TOOLS
 root_agent = LlmAgent(
     name=configs.agent_settings.name,
     model=configs.agent_settings.model,
-    instruction=ROUTER_INSTRUCTIONS,
+    # Custom GOOGLE_COMPLIANCE_RULES (if any) are appended to the instruction
+    instruction=build_instruction(policy.compliance.transformed_rules),
     tools=ALL_TOOLS,  # Add banking + observability tools
     # Layer 2a: every request is screened by the ML safety check BEFORE the
     # model runs. The explicit safety_check_layer1/2 tools remain for trace
@@ -48,8 +49,3 @@ root_agent = LlmAgent(
 )
 
 logger.info(f"Agent '{root_agent.name}' initialized with model '{root_agent.model}' and {len(ALL_TOOLS)} tools")
-
-# TODO: Add post-processing callback to handle ESCALATE actions
-# This would:
-# 1. Parse agent response JSON
-# 2. If action is "ESCALATE", log to escalation queue

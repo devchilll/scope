@@ -187,30 +187,28 @@ Create a `.env` file in the project root. All settings are read by `scope/config
 
 ```bash
 # Google Cloud
-GOOGLE_GENAI_USE_VERTEXAI=true
+GOOGLE_GENAI_USE_VERTEXAI=true        # false = Gemini API with GOOGLE_API_KEY
 GOOGLE_CLOUD_PROJECT=your-project-id
 GOOGLE_CLOUD_LOCATION=us-central1
 
 # Pillar 1: Safety
-GOOGLE_SAFETY_MODE=STRICT
 GOOGLE_SAFETY_THRESHOLD_HIGH=0.8      # block when any toxic-bert score >= this
-GOOGLE_SAFETY_THRESHOLD_MEDIUM=0.4
 GOOGLE_SAFETY_USE_ML_MODELS=true      # false skips the pre-model classifier (logged)
 
-# Pillar 2: Compliance
+# Pillar 2: Compliance - extra free-text rules appended to the agent instruction
 GOOGLE_COMPLIANCE_ENABLED=true
-GOOGLE_COMPLIANCE_RULES=["Never share full account numbers"]
+GOOGLE_COMPLIANCE_RULES='["Never share full account numbers"]'
 
 # Pillar 4: IAM - who the agent is acting for (see "Switching roles")
-GOOGLE_IAM_ENABLED=true
 GOOGLE_IAM_CURRENT_USER_ID=user
 GOOGLE_IAM_CURRENT_USER_ROLE=USER     # USER | STAFF | ADMIN | SYSTEM
 GOOGLE_IAM_CURRENT_USER_NAME="Alice Johnson"
 
-# Pillar 5: Escalation
-GOOGLE_ESCALATION_ENABLED=true
+# Pillar 5: Escalation - Layer 2b confidence below this is escalated
 GOOGLE_ESCALATION_THRESHOLD=0.6
 ```
+
+The agent, the Layer 2b analysis, and the decision step all use the model set in `Config.agent_settings.model` (default `gemini-2.5-flash`).
 
 ### Run the Agent
 
@@ -311,7 +309,7 @@ safety_rules:
 4. The decision step applies rule-specific handling (e.g. COMP-001 → `rewrite` to last-4-digits)
 
 ### Free-text rules
-`GOOGLE_COMPLIANCE_RULES` (a JSON list) is loaded and normalised by `scope/compliance/transform_rules` at agent start-up, and `scope/compliance/examples.py` ships starter rule sets (`HEALTHCARE_RULES`, `FINANCIAL_SERVICES_RULES`, `LEGAL_SERVICES_RULES`, `RETAIL_BRAND_RULES`, `SAAS_RULES`, `EDUCATION_RULES`). In the current build the YAML files are the rules the agent actually enforces; to enforce free-text rules, add them to the YAML (or render them with `format_compliance_section` into `ROUTER_INSTRUCTIONS`).
+`GOOGLE_COMPLIANCE_RULES` (a JSON list) adds business-specific rules without editing YAML. When `GOOGLE_COMPLIANCE_ENABLED=true` and the list is non-empty, `scope/agent.py` turns each rule into a `PRINCIPLE:` line (`transform_rules`) and `build_instruction` appends them as a numbered **COMPLIANCE PRINCIPLES** section to the agent instruction (`format_compliance_section`); with no rules the instruction is unchanged. These rules are enforced by the agent model itself: they are not included in the Layer 2b analysis prompt and have no rule IDs. `scope/compliance/examples.py` ships starter rule sets (`HEALTHCARE_RULES`, `FINANCIAL_SERVICES_RULES`, `LEGAL_SERVICES_RULES`, `RETAIL_BRAND_RULES`, `SAAS_RULES`, `EDUCATION_RULES`), and `example_config.py` has per-industry templates (rules + escalation threshold) with the matching `.env` lines.
 
 ---
 
@@ -372,10 +370,13 @@ Agent tools: `get_account_balance`, `get_transaction_history`, `get_user_account
 Human-in-the-loop review queue. Tickets are stored in the `escalations` table of the banking SQLite database (`scope/data/storage/banking.db`).
 
 ### When Escalation Occurs
-- Decision confidence below `GOOGLE_ESCALATION_THRESHOLD` (default 0.6)
-- Ambiguous or off-topic requests, edge cases
-- High-value transactions (COMP-004)
+- Layer 2b `confidence` below `GOOGLE_ESCALATION_THRESHOLD` (default 0.6): the value is written into the decision prompt, and the decision model chooses `escalate`
+- Ambiguous or off-topic requests, edge cases (judged by the decision model)
+- High-value transfers (COMP-004), enforced in code: `transfer_money` does not execute a transfer above `thresholds.high_value_amount` in `scope/rules/compliance_rules.yaml` (default $10,000). It creates a pending ticket (`metadata.type = "high_value_transfer"`) and moves no money; resolving the ticket does not execute the transfer.
+- Fraud reports (`report_fraud`) create a ticket (`metadata.type = "fraud_report"`)
 - Errors in the decision step fail safe to `escalate`
+
+When the agent escalates, `create_escalation_ticket(user_input, reasoning, confidence)` stores the Layer 2b confidence on the ticket, so `get_statistics()["avg_confidence"]` reflects the escalated requests.
 
 ### API
 
@@ -551,7 +552,8 @@ uv run pytest tests/ -v
 - ✅ Text classifier thresholds (high / severe), empty input, unavailable model
 - ✅ Compliance rule transformation
 - ✅ IAM roles, permissions, access control
-- ✅ Escalation queue: add / view by role / resolve by role / statistics
+- ✅ Escalation queue: add / view by role / resolve by role / statistics / metadata
+- ✅ Escalation wiring: configured threshold in the decision prompt, ticket confidence, COMP-004 high-value transfer guard, custom compliance rules in the instruction
 - ✅ Agent initialisation and callback registration
 - ✅ Audit trail: a `tool_call` event per tool run (checked through a scripted ADK run), daily log rollover, `view_audit_logs` newest-first, viewer filters in follow mode (tests write to temp dirs only)
 - ⏭️ Gemini-backed Layer 2b / decision tests (require `gcloud auth application-default login`)
@@ -571,9 +573,9 @@ config = Config(
     SAFETY_THRESHOLD_HIGH=0.7,
     SAFETY_USE_ML_MODELS=True,
     IAM_CURRENT_USER_ROLE="STAFF",
-    ESCALATION_THRESHOLD=0.7,          # higher = fewer escalations
+    ESCALATION_THRESHOLD=0.7,          # higher = more escalations
 )
-policy = config.current_policy          # .safety / .compliance / .iam / .escalation
+policy = config.current_policy          # .safety / .compliance / .escalation
 ```
 
 ---
@@ -581,7 +583,7 @@ policy = config.current_policy          # .safety / .compliance / .iam / .escala
 ## 📚 Dependencies
 
 - **google-adk** - Agent Development Kit (agent, callbacks, web UI, tracing)
-- **google-cloud-aiplatform** / **google-generativeai** - Gemini on Vertex AI
+- **google-cloud-aiplatform** / **google-genai** (`google.genai`, installed with google-adk) - Gemini on Vertex AI or the Gemini API
 - **detoxify** + **transformers (<5)** + **torch 2.2.2** - `unitary/toxic-bert` text safety (transformers 5.x requires torch ≥ 2.4)
 - **timm**, **pillow** - image safety model
 - **pydantic-settings** - configuration

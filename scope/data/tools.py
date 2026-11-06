@@ -311,6 +311,10 @@ def report_fraud(account_id: str, description: str, user_id: Optional[str] = Non
 def transfer_money(from_account_id: str, to_account_id: str, amount: float, description: Optional[str] = None) -> str:
     """Transfer money between accounts (USER can only transfer between their own accounts).
     
+    Transfers above the COMP-004 high-value limit (compliance_rules.yaml
+    ``thresholds.high_value_amount``) are not executed; an escalation ticket
+    is created for human review instead.
+    
     Args:
         from_account_id: Source account ID
         to_account_id: Destination account ID
@@ -365,6 +369,54 @@ def transfer_money(from_account_id: str, to_account_id: str, amount: float, desc
         # Check sufficient balance
         if from_account.balance < amount:
             return f"❌ Insufficient funds. Account {from_account_id} balance: ${from_account.balance:.2f}, requested transfer: ${amount:.2f}"
+        
+        # COMP-004: transfers above the high-value limit (compliance_rules.yaml
+        # thresholds.high_value_amount) are not executed - escalate to a human
+        from ..rules import COMPLIANCE_CONFIG
+        from ..escalation import EscalationQueue, EscalationTicket
+        high_value_amount = float(COMPLIANCE_CONFIG["thresholds"]["high_value_amount"])
+        if amount > high_value_amount:
+            ticket = EscalationTicket(
+                user_id=user_id,
+                input_text=(
+                    f"Transfer ${amount:.2f} from {from_account_id} to {to_account_id}"
+                    + (f": {description}" if description else "")
+                ),
+                agent_reasoning=(
+                    f"COMP-004: transfer exceeds the high-value limit of ${high_value_amount:,.2f} "
+                    f"- not executed, requires human review"
+                ),
+                confidence=1.0,  # Deterministic rule, not a model judgement
+                metadata={
+                    "type": "high_value_transfer",
+                    "rule_id": "COMP-004",
+                    "from_account_id": from_account_id,
+                    "to_account_id": to_account_id,
+                    "amount": amount,
+                    "description": description,
+                }
+            )
+            ticket_id = EscalationQueue(db).add_ticket(ticket)
+            
+            audit_logger.log_event(
+                event_type=AuditEventType.ESCALATION_CREATED,
+                user_id=user_id,
+                action="transfer_escalated_high_value",
+                details={
+                    "from_account": from_account_id,
+                    "to_account": to_account_id,
+                    "amount": amount,
+                    "high_value_amount": high_value_amount,
+                    "ticket_id": ticket_id
+                }
+            )
+            
+            return (
+                f"⏸️ Transfer not executed: ${amount:.2f} exceeds the ${high_value_amount:,.2f} "
+                f"high-value limit (COMP-004).\n\n"
+                f"Escalation ticket {ticket_id} has been created for staff review. "
+                f"No money has been moved."
+            )
         
         # Create transaction ID
         transaction_id = str(uuid.uuid4())
