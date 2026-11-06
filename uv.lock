@@ -2216,12 +2216,16 @@ dependencies = [
     { name = "numpy" },
     { name = "pillow" },
     { name = "pydantic-settings" },
-    { name = "pytest" },
     { name = "pyyaml" },
     { name = "requests" },
     { name = "timm" },
     { name = "torch" },
     { name = "transformers" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
 ]
 
 [package.metadata]
@@ -2232,13 +2236,15 @@ requires-dist = [
     { name = "numpy", specifier = "<2" },
     { name = "pillow" },
     { name = "pydantic-settings", specifier = ">=2.0.0" },
-    { name = "pytest", specifier = ">=7.0.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "requests" },
     { name = "timm" },
     { name = "torch", specifier = "==2.2.2" },
     { name = "transformers", specifier = ">=4.40,<5" },
 ]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=7.0.0" }]
 
 [[package]]
 name = "sentencepiece"
