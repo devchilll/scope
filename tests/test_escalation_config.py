@@ -217,7 +217,7 @@ class TestHighValueTransferGuard:
 
         # USER: another user's account is not readable at all
         result = data_tools.transfer_money("staff_acc", "acc2", 15000.0)
-        assert "cannot access account staff_acc" in result
+        assert "Source account staff_acc not found or you don't have access to it" in result
         assert _all_tickets(db) == []
 
         # STAFF can read user1's acc1, so this reaches the ownership check

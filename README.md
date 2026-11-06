@@ -573,7 +573,7 @@ config = Config(
     SAFETY_THRESHOLD_HIGH=0.7,
     SAFETY_USE_ML_MODELS=True,
     IAM_CURRENT_USER_ROLE="STAFF",
-    ESCALATION_THRESHOLD=0.7,          # higher = more escalations
+    ESCALATION_THRESHOLD=0.7,          # decision prompt escalates below this confidence (higher = more)
 )
 policy = config.current_policy          # .safety / .compliance / .escalation
 ```
