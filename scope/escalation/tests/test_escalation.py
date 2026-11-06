@@ -1,5 +1,7 @@
 """Unit tests for Escalation Pillar (Queue, Tickets, SQLite storage)."""
 
+import sqlite3
+
 import pytest
 from pathlib import Path
 from scope.escalation import EscalationQueue, EscalationTicket
@@ -142,6 +144,30 @@ class TestEscalationQueue:
         test_queue.add_ticket(sample_ticket)
         staff = User("staff1", UserRole.STAFF)
         assert test_queue.view_tickets(staff)[0].metadata is None
+
+    def test_malformed_metadata_reads_as_none(self, test_queue):
+        """A row with invalid or non-object metadata JSON does not break reads."""
+        stored_metadata = {
+            "bad-json": "{not json",
+            "json-list": '["a", "b"]',
+            "valid": '{"type": "fraud_report"}',
+        }
+        for ticket_id in stored_metadata:
+            test_queue.add_ticket(EscalationTicket(
+                id=ticket_id, user_id="user", input_text="q", agent_reasoning="r", confidence=0.5
+            ))
+        conn = sqlite3.connect(test_queue.db.db_path)
+        conn.executemany(
+            "UPDATE escalations SET metadata = ? WHERE id = ?",
+            [(raw, ticket_id) for ticket_id, raw in stored_metadata.items()]
+        )
+        conn.commit()
+        conn.close()
+
+        staff = User("staff1", UserRole.STAFF)
+        by_id = {t.id: t.metadata for t in test_queue.view_tickets(staff)}
+        assert by_id == {"bad-json": None, "json-list": None, "valid": {"type": "fraud_report"}}
+        assert test_queue.get_statistics(staff)["total"] == 3
 
     def test_get_stats(self, test_queue, sample_ticket):
         """Test queue statistics."""

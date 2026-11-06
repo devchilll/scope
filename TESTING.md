@@ -1,7 +1,7 @@
 # SCOPE Test Suite
 
-Unit and integration tests for the SCOPE framework's 5 pillars: 203 tests
-collected (`uv run pytest --co -q`). Without Google Cloud credentials 199 pass
+Unit and integration tests for the SCOPE framework's 5 pillars: 240 tests
+collected (`uv run pytest --co -q`). Without Google Cloud credentials 236 pass
 and the 4 Gemini-backed tests skip.
 
 ## Test Structure
@@ -10,14 +10,14 @@ and the 4 Gemini-backed tests skip.
 scope/
 ├── safety/tests/
 │   ├── test_safety.py          # Image safety tool (3 tests)
-│   └── test_text_safety.py     # Text safety classifier, fake model (6 tests)
+│   └── test_text_safety.py     # Text safety classifier, fake model (11 tests)
 ├── compliance/tests/
 │   └── test_compliance.py      # Rule transformation (5 tests)
 ├── iam/tests/
 │   ├── test_iam.py             # Roles, permissions, ACL (14 tests)
-│   └── test_tool_enforcement.py # Banking tools act as current user (24 tests)
+│   └── test_tool_enforcement.py # Banking tools act as current user (33 tests)
 ├── escalation/tests/
-│   └── test_escalation.py      # Queue, tickets, metadata, SQLite (17 tests)
+│   └── test_escalation.py      # Queue, tickets, metadata, SQLite (18 tests)
 └── tests/
     ├── test_db_writes_and_tool_permissions.py # DB writes, tool role checks, transfer persistence (5 tests)
     ├── test_prompt.py          # Permission-driven tool list in the prompt (22 tests)
@@ -25,9 +25,9 @@ scope/
 
 tests/
 ├── test_agent_integration.py   # Agent wiring, prompt, decision actions (16 tests)
-├── test_audit_logging.py       # Tool-call audit callback, daily rollover, log viewing (14 tests)
-├── test_callbacks.py           # Pre-model safety gate (before_model_callback) (23 tests)
-├── test_escalation_config.py   # Escalation threshold, COMP-004 transfer guard, custom rules (15 tests)
+├── test_audit_logging.py       # Tool-call audit callback, daily rollover, log viewing (22 tests)
+├── test_callbacks.py           # Pre-model safety gate (before_model_callback) (35 tests)
+├── test_escalation_config.py   # Escalation threshold, COMP-004 transfer guard, custom rules (17 tests)
 ├── test_integration.py         # Escalation queue on a temp DB, Gemini-backed Layer 2b / decision (9 tests, 4 need credentials)
 └── test_transfer_validation.py # transfer_money validation, atomic transfer, connection cleanup (27 tests)
 ```
@@ -69,10 +69,11 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 
 ## Test Coverage
 
-### Pillar 1: Safety (9 tests)
+### Pillar 1: Safety (14 tests)
 - ✅ ImageSafetyTool initialises (processor and model loaded) and exposes `check`
 - ✅ A failed image check returns an unknown result (`checked: false`), never "safe"
-- ✅ TextSafetyTool: safe / toxic / severe-toxicity / threshold / empty input / model unavailable
+- ✅ TextSafetyTool: safe / toxic / severe-toxicity / threshold / empty input / model unavailable /
+  long text classified in overlapping windows, max score per category
   (`scope/safety/tests/test_text_safety.py`, fake model - no download)
 
 ### `safety_check_layer1` tool (3 tests, `scope/tests/test_safety_layer1.py`)
@@ -80,12 +81,15 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 - ✅ Model unavailable → `SKIPPED (model not loaded)`, logged with `success: false`, never `PASSED`
 - Fake classifier and mocked audit logger, no download (the config-disabled path is in `tests/test_callbacks.py`)
 
-### Pre-model safety gate (23 tests, `tests/test_callbacks.py`)
-- ✅ Only the latest user turn is screened (model turns ignored)
+### Pre-model safety gate (`tests/test_callbacks.py`)
+- ✅ The new message is screened, whatever role the client gave it; without text, the latest user turn
 - ✅ Safe input continues to the LLM
 - ✅ Toxic input returns a refusal `LlmResponse` before the model is called
 - ✅ Screened and logged once per turn; the decision applies to every model call of that turn (tool loop)
 - ✅ Blocked text is withheld from later model requests (unit + end-to-end through ADK's runner with a fake LLM)
+- ✅ Blocked hashes come from the refusal events' `custom_metadata`; wiping the state copy (`state_delta`, state-only event) doesn't bring the text back
+- ✅ A client-supplied `temp:scope_safety_gate_decision` can't make a toxic message pass
+- ✅ Screening error → request refused, text withheld from later turns
 - ✅ `scope.pre_model_safety_gate` span with blocked / max-score attributes
 - ✅ Model unavailable → logged, fails open to Layer 2b
 - ✅ `GOOGLE_SAFETY_USE_ML_MODELS=false` → classifier skipped (logged), in the callback and the `safety_check_layer1` tool
@@ -112,7 +116,7 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 - ✅ Escalation viewing permissions
 - ✅ Escalation resolution permissions
 
-### IAM tool enforcement (24 tests, `scope/iam/tests/test_tool_enforcement.py`)
+### IAM tool enforcement (33 tests, `scope/iam/tests/test_tool_enforcement.py`)
 - ✅ Case-insensitive role parsing (`parse_role`)
 - ✅ Role descriptions match `ROLE_PERMISSIONS`
 - ✅ USER cannot read another user's transactions or accounts, even by passing their `user_id`
@@ -130,7 +134,7 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 - ✅ `view_audit_logs` and `resolve_escalation_ticket` deny USER and allow STAFF
 - ✅ `transfer_money` persists through one `Database.transfer_funds` call
 
-### Pillar 5: Escalation (17 tests)
+### Pillar 5: Escalation (18 tests)
 - ✅ Ticket creation
 - ✅ Auto-generated fields (ID, timestamp)
 - ✅ Optional fields defaults
@@ -143,6 +147,7 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 - ✅ Resolve ticket (ADMIN)
 - ✅ Resolve ticket allowed (STAFF), denied (USER)
 - ✅ Ticket metadata stored and read back (and NULL → None)
+- ✅ Malformed metadata (invalid JSON or not an object) reads back as None without breaking the queue
 - ✅ Queue statistics
 - ✅ Default database location (path only; the real database is not opened)
 - ✅ Custom database location
@@ -167,15 +172,15 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
   high scores → `approve`; low scores → `reject` or `escalate`. These skip without Google Cloud
   credentials and fail if the tool returned its error fallback instead of a model answer.
 
-### Escalation & config wiring (15 tests, `tests/test_escalation_config.py`)
-- ✅ Decision prompt uses `GOOGLE_ESCALATION_THRESHOLD` (default 0.6) and the configured model
+### Escalation & config wiring (`tests/test_escalation_config.py`)
+- ✅ Decision prompt uses `GOOGLE_ESCALATION_THRESHOLD` (default 0.6) for both the escalate and approve conditions, and the configured model
 - ✅ `GOOGLE_GENAI_USE_VERTEXAI` selects Vertex AI or the Gemini API client
 - ✅ `create_escalation_ticket` stores the Layer 2b confidence (default 0.0, clamped to 0-1)
-- ✅ COMP-004: transfers above `high_value_amount` are not executed and create a ticket; at the limit they execute; the limit follows the YAML value
+- ✅ COMP-004: transfers above `high_value_amount` are not executed and create a ticket; at the limit they execute; the limit follows the YAML value; an over-limit transfer from an account the caller does not own is refused without a ticket
 - ✅ `report_fraud` ticket metadata is persisted
-- ✅ `GOOGLE_COMPLIANCE_RULES` appended to the agent instruction (unchanged when empty)
+- ✅ `GOOGLE_COMPLIANCE_RULES` appended to the agent instruction (unchanged when empty); rules set in the environment, including braces, appear verbatim in the system instruction produced by ADK's instruction processing
 
-### Audit logging (14 tests, `tests/test_audit_logging.py`)
+### Audit logging (22 tests, `tests/test_audit_logging.py`)
 - ✅ A `tool_call` event per tool run (checked through a scripted ADK run), with role and arguments; errors and denials marked failed; sensitive and long arguments not dumped
 - ✅ `after_model_callback` logs truncated response text and function calls
 - ✅ Audit and compliance logs roll over at midnight; separate logger instances do not cross-write

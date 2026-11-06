@@ -3,12 +3,14 @@
 Covers: configured escalation threshold and model in the decision prompt,
 GOOGLE_GENAI_USE_VERTEXAI, ticket confidence pass-through, the deterministic
 COMP-004 high-value transfer guard, fraud-report metadata, and custom
-compliance rules in the agent instruction.
+compliance rules (including braces) in the instruction ADK sends to the model.
 
 All database access uses a temporary SQLite file and loggers are mocked, so
 nothing is written to scope/data/storage or scope/logging.
 """
 
+import asyncio
+import importlib
 import json
 from datetime import datetime
 from unittest.mock import MagicMock
@@ -60,6 +62,27 @@ def _all_tickets(db):
     return EscalationQueue(db).view_tickets(IAMUser("staff1", UserRole.STAFF))
 
 
+def _adk_system_instruction(agent):
+    """Run ADK's instruction request processor for ``agent``; return the system instruction."""
+    from google.adk.agents.invocation_context import InvocationContext
+    from google.adk.flows.llm_flows.instructions import request_processor
+    from google.adk.models.llm_request import LlmRequest
+    from google.adk.sessions import InMemorySessionService
+
+    async def run():
+        service = InMemorySessionService()
+        session = await service.create_session(app_name="test", user_id="user1")
+        ctx = InvocationContext(
+            session_service=service, invocation_id="inv", agent=agent, session=session
+        )
+        request = LlmRequest()
+        async for _ in request_processor.run_async(ctx, request):
+            pass
+        return request.config.system_instruction
+
+    return asyncio.run(run())
+
+
 class TestDecisionPrompt:
     """make_safe_and_compliant_decision uses configured threshold and model."""
 
@@ -77,6 +100,7 @@ class TestDecisionPrompt:
     def test_prompt_uses_configured_threshold(self, monkeypatch):
         kwargs = self._run_decision(monkeypatch, Config(ESCALATION_THRESHOLD=0.85))
         assert "confidence < 0.85" in kwargs["contents"]
+        assert "confidence >= 0.85" in kwargs["contents"]  # approve requires it
         assert "confidence < 0.7" not in kwargs["contents"]
 
     def test_default_threshold_is_0_6(self, monkeypatch):
@@ -177,6 +201,38 @@ class TestHighValueTransferGuard:
         assert "not executed" in result
         assert len(_all_tickets(banking_tools)) == 1
 
+    def test_over_limit_from_unowned_account_not_escalated(self, banking_tools, monkeypatch):
+        """Ownership is checked before COMP-004: no ticket for another user's account."""
+        db = banking_tools
+        db.create_user(DataUser(user_id="staff1", name="Staff", email="s@example.com"))
+        db.create_account(Account(
+            account_id="staff_acc",
+            user_id="staff1",
+            account_type=AccountType.CHECKING,
+            balance=20000.0,
+            currency="USD",
+            status="active",
+            created_at=datetime.now()
+        ))
+
+        # USER: another user's account is not readable at all
+        result = data_tools.transfer_money("staff_acc", "acc2", 15000.0)
+        assert "Source account staff_acc not found or you don't have access to it" in result
+        assert _all_tickets(db) == []
+
+        # STAFF can read user1's acc1, so this reaches the ownership check
+        monkeypatch.setattr(data_tools, "config", Config(
+            IAM_CURRENT_USER_ID="staff1", IAM_CURRENT_USER_ROLE="STAFF", IAM_CURRENT_USER_NAME="Staff"
+        ))
+
+        result = data_tools.transfer_money("acc1", "staff_acc", 15000.0)
+
+        assert result == "❌ You can only transfer from your own accounts."
+        assert _all_tickets(db) == []
+        staff = IAMUser("staff1", UserRole.STAFF)
+        assert db.get_account(staff, "acc1").balance == 50000.0
+        assert db.get_account(staff, "staff_acc").balance == 20000.0
+
 
 class TestFraudReportMetadata:
     """report_fraud's metadata is persisted on the ticket."""
@@ -196,6 +252,8 @@ class TestFraudReportMetadata:
 class TestCustomComplianceRules:
     """GOOGLE_COMPLIANCE_RULES are appended to the agent instruction."""
 
+    RULES = ["Do not discuss competitors", "Address the customer as {customer_name}"]
+
     def test_no_rules_leaves_instruction_unchanged(self):
         from scope.prompt import ROUTER_INSTRUCTIONS, build_instruction
         assert build_instruction([]) == ROUTER_INSTRUCTIONS
@@ -209,7 +267,33 @@ class TestCustomComplianceRules:
         assert "COMPLIANCE PRINCIPLES:" in instruction
         assert "1. PRINCIPLE: Do not discuss competitors" in instruction
 
-    def test_agent_uses_build_instruction(self):
-        from scope.agent import policy, root_agent
+    def test_rules_from_env_reach_model_instruction(self):
+        """Rules set via GOOGLE_COMPLIANCE_RULES are in the instruction ADK sends,
+        and braces in a rule are sent as written (no session-state templating)."""
+        from scope.compliance import transform_rules
         from scope.prompt import build_instruction
-        assert root_agent.instruction == build_instruction(policy.compliance.transformed_rules)
+        import scope.agent as agent_module
+
+        try:
+            with pytest.MonkeyPatch.context() as mp:
+                mp.setenv("GOOGLE_COMPLIANCE_ENABLED", "true")
+                mp.setenv("GOOGLE_COMPLIANCE_RULES", json.dumps(self.RULES))
+                importlib.reload(agent_module)
+                system_instruction = _adk_system_instruction(agent_module.root_agent)
+        finally:
+            importlib.reload(agent_module)  # restore the agent built from the real env
+
+        assert system_instruction == build_instruction(transform_rules(self.RULES))
+        assert "1. PRINCIPLE: Do not discuss competitors" in system_instruction
+        assert "2. PRINCIPLE: Address the customer as {customer_name}" in system_instruction
+
+    def test_string_instruction_with_braces_would_fail(self):
+        """Control: ADK templates a plain-string instruction, so the same rule
+        raises KeyError - the case the agent's InstructionProvider avoids."""
+        from google.adk.agents import LlmAgent
+        from scope.compliance import transform_rules
+        from scope.prompt import build_instruction
+
+        agent = LlmAgent(name="string_instruction", instruction=build_instruction(transform_rules(self.RULES)))
+        with pytest.raises(KeyError, match="customer_name"):
+            _adk_system_instruction(agent)

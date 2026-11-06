@@ -51,6 +51,51 @@ def check_target_user(iam_user: IAMUser, target_user_id: Optional[str]) -> None:
         )
 
 
+def account_unavailable(account_id: str) -> str:
+    """Reply for an account the caller cannot see, whether or not it exists."""
+    return f"Account {account_id} not found or not accessible."
+
+
+def lookup_account(
+    iam_user: IAMUser,
+    account_id: str,
+    event_type: AuditEventType,
+    action: str,
+) -> Optional[Account]:
+    """Get an account without revealing to the caller whether it exists.
+
+    Returns None both when the account does not exist and when the caller may
+    not access it (e.g. a USER asking for another customer's account), so the
+    caller's reply cannot be used to probe which account ids exist. The precise
+    reason is written to the audit log.
+
+    Args:
+        iam_user: Current user making the request
+        account_id: Account to look up
+        event_type: Audit event type for a failed lookup
+        action: Audit action name for a failed lookup
+
+    Returns:
+        The account, or None if it is missing or not accessible
+    """
+    try:
+        account = db.get_account(iam_user, account_id)
+        reason = None if account else f"Account {account_id} does not exist"
+    except AccessDeniedException as e:
+        account, reason = None, str(e)
+
+    if reason:
+        audit_logger.log_event(
+            event_type=event_type,
+            user_id=iam_user.user_id,
+            action=action,
+            details={"account_id": account_id},
+            success=False,
+            error=reason
+        )
+    return account
+
+
 def get_account_balance(account_id: str) -> str:
     """Get the current balance for a customer's account.
     
@@ -65,11 +110,12 @@ def get_account_balance(account_id: str) -> str:
         iam_user = get_current_user()
         user_id = iam_user.user_id
         
-        # Get account (IAM-protected)
-        account = db.get_account(iam_user, account_id)
-        
+        # Get account (IAM-protected; missing and inaccessible look the same)
+        account = lookup_account(
+            iam_user, account_id, AuditEventType.ACCOUNT_ACCESS, "view_balance_failed"
+        )
         if not account:
-            return f"Account {account_id} not found."
+            return account_unavailable(account_id)
         
         # Log account access for audit
         audit_logger.log_account_access(
@@ -116,10 +162,13 @@ def get_transaction_history(account_id: str, days: int = 30, user_id: Optional[s
         iam_user = get_current_user()
         check_target_user(iam_user, user_id)
 
-        # Get account (IAM-protected: USER may only access own accounts)
-        account = db.get_account(iam_user, account_id)
+        # Get account (IAM-protected: USER may only access own accounts;
+        # missing and inaccessible look the same)
+        account = lookup_account(
+            iam_user, account_id, AuditEventType.TRANSACTION_QUERY, "view_transactions_failed"
+        )
         if not account:
-            return f"Account {account_id} not found."
+            return account_unavailable(account_id)
         if user_id and account.user_id != user_id:
             return f"Account {account_id} does not belong to user {user_id}."
 
@@ -251,10 +300,13 @@ def report_fraud(account_id: str, description: str, user_id: Optional[str] = Non
         iam_user = get_current_user()
         check_target_user(iam_user, user_id)
 
-        # Ownership check (IAM-protected: USER may only report on own accounts)
-        account = db.get_account(iam_user, account_id)
+        # Ownership check (IAM-protected: USER may only report on own accounts;
+        # missing and inaccessible look the same)
+        account = lookup_account(
+            iam_user, account_id, AuditEventType.ESCALATION_CREATED, "fraud_report_failed"
+        )
         if not account:
-            return f"Account {account_id} not found."
+            return account_unavailable(account_id)
         if user_id and account.user_id != user_id:
             return f"Account {account_id} does not belong to user {user_id}."
 
@@ -353,9 +405,14 @@ def transfer_money(from_account_id: str, to_account_id: str, amount: float, desc
         if from_account_id == to_account_id:
             return "❌ Source and destination accounts must be different."
 
-        # Get both accounts to verify ownership and balances
-        from_account = db.get_account(iam_user, from_account_id)
-        to_account = db.get_account(iam_user, to_account_id)
+        # Get both accounts to verify ownership and balances (missing and
+        # inaccessible accounts look the same)
+        from_account = lookup_account(
+            iam_user, from_account_id, AuditEventType.TRANSACTION_QUERY, "transfer_failed"
+        )
+        to_account = lookup_account(
+            iam_user, to_account_id, AuditEventType.TRANSACTION_QUERY, "transfer_failed"
+        )
         
         if not from_account:
             return f"❌ Source account {from_account_id} not found or you don't have access to it."
@@ -433,7 +490,10 @@ def transfer_money(from_account_id: str, to_account_id: str, amount: float, desc
                 f"⏸️ Transfer not executed: ${amount:.2f} exceeds the ${high_value_amount:,.2f} "
                 f"high-value limit (COMP-004).\n\n"
                 f"Escalation ticket {ticket_id} has been created for staff review. "
-                f"No money has been moved."
+                f"No money has been moved.\n\n"
+                f"The review does not carry out the transfer. Requesting it again here "
+                f"creates another ticket rather than moving money; after approval, "
+                f"contact the bank to complete it."
             )
         
         # Create transaction ID
