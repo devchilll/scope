@@ -415,7 +415,10 @@ def transfer_money(from_account_id: str, to_account_id: str, amount: float, desc
                 f"⏸️ Transfer not executed: ${amount:.2f} exceeds the ${high_value_amount:,.2f} "
                 f"high-value limit (COMP-004).\n\n"
                 f"Escalation ticket {ticket_id} has been created for staff review. "
-                f"No money has been moved."
+                f"No money has been moved.\n\n"
+                f"The review does not carry out the transfer. Requesting it again here "
+                f"creates another ticket rather than moving money; after approval, "
+                f"contact the bank to complete it."
             )
         
         # Create transaction ID

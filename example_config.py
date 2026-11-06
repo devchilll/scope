@@ -12,7 +12,8 @@ file) in .env.
 
 COMPLIANCE_RULES are appended to the agent instruction as numbered
 COMPLIANCE PRINCIPLES. ESCALATION_THRESHOLD is the Layer 2b confidence below
-which the decision step escalates (higher threshold = more escalations).
+which the decision prompt instructs the decision model to escalate (higher
+threshold = more escalations).
 More starter rule sets live in scope/compliance/examples.py.
 """
 

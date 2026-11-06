@@ -18,6 +18,20 @@ if TYPE_CHECKING:
     from ..escalation.models import EscalationTicket
 
 
+def _parse_metadata(raw: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Parse an escalation's stored metadata JSON.
+
+    Returns the dict, or None if the column is empty, not valid JSON, or
+    not a JSON object, so one malformed row cannot break reading the queue.
+    """
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
 
 class Database:
     """Database manager with IAM-protected operations.
@@ -514,7 +528,7 @@ class Database:
                 resolution_timestamp=datetime.fromisoformat(row["resolved_at"]) if row["resolved_at"] else None,
                 resolved_by=row["resolved_by"],
                 resolution_note=row["resolution"],
-                metadata=json.loads(row["metadata"]) if row["metadata"] else None
+                metadata=_parse_metadata(row["metadata"])
             )
             for row in rows
         ]
