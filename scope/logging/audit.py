@@ -5,12 +5,15 @@ tool calls, and database operations for compliance (PCI-DSS, SOC2).
 """
 
 import json
+import logging
 import threading
 from datetime import datetime
 from typing import Optional, Dict, Any
 from pathlib import Path
 from enum import Enum
 
+
+logger = logging.getLogger(__name__)
 
 _write_lock = threading.Lock()
 
@@ -20,22 +23,37 @@ def append_daily_jsonl(
     prefix: str,
     record: Dict[str, Any],
     when: Optional[datetime] = None,
-) -> Path:
+) -> Optional[Path]:
     """Append one JSON record to ``<log_dir>/<prefix>_YYYY-MM-DD.jsonl``.
 
     The file name is resolved on every write from ``when`` (default: now), so a
     long-running process such as ``adk web`` rolls over to a new file at
-    midnight instead of writing to the file of the day it started.
+    midnight instead of writing to the file of the day it started. The
+    directory is (re)created on every write, so deleting it while the process
+    runs does not stop logging.
+
+    Logging is fail-open: if the record cannot be serialized or written, the
+    failure is reported through Python's ``logging`` module and this function
+    returns ``None`` instead of raising, so an audit-log failure never changes
+    the outcome of the tool or callback that triggered it. Values that are not
+    JSON-serializable are written as ``str(value)``.
 
     Returns:
-        Path of the file the record was written to
+        Path of the file the record was written to, or ``None`` if the write
+        failed
     """
     when = when or datetime.now()
-    log_file = Path(log_dir) / f"{prefix}_{when.strftime('%Y-%m-%d')}.jsonl"
-    line = json.dumps(record)
-    with _write_lock:
-        with open(log_file, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
+    log_dir = Path(log_dir)
+    log_file = log_dir / f"{prefix}_{when.strftime('%Y-%m-%d')}.jsonl"
+    try:
+        line = json.dumps(record, default=str)
+        with _write_lock:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+    except (OSError, TypeError, ValueError):
+        logger.exception("Failed to write log record to %s", log_file)
+        return None
     return log_file
 
 
@@ -85,8 +103,10 @@ class AuditLogger:
         success: bool = True,
         error: Optional[str] = None,
         session_id: Optional[str] = None
-    ):
+    ) -> bool:
         """Log an audit event.
+
+        Never raises on a write failure (see ``append_daily_jsonl``).
         
         Args:
             event_type: Type of event
@@ -96,6 +116,9 @@ class AuditLogger:
             success: Whether the action succeeded
             error: Error message if action failed
             session_id: Optional session ID to group related events
+
+        Returns:
+            True if the event was written, False if the write failed
         """
         now = datetime.now()
         event = {
@@ -114,7 +137,7 @@ class AuditLogger:
             event["error"] = error
         
         # Log as JSON for structured logging (one event per line)
-        append_daily_jsonl(self.log_dir, "audit", event, when=now)
+        return append_daily_jsonl(self.log_dir, "audit", event, when=now) is not None
     
     def log_user_query(self, user_id: str, query: str, response_action: str):
         """Log a user query and agent response.
