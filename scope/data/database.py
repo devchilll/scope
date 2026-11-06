@@ -22,10 +22,15 @@ if TYPE_CHECKING:
 class Database:
     """Database manager with IAM-protected operations.
 
-    Methods given an `iam_user` check its role and account ownership
-    (`get_user_accounts` only when one is passed). The write helpers
-    (`create_*`, `update_account`) and `get_user` are internal (used for
-    seeding and by tools after their own checks) and do no IAM checks.
+    Methods given an `iam_user` check its role: `get_account`,
+    `get_user_accounts` (only when one is passed) and
+    `get_account_transactions` also check account ownership,
+    `get_escalations` limits callers without VIEW_ALL_ESCALATIONS to their
+    own tickets, and `resolve_escalation` checks the role only. The write
+    helpers (`create_*`, `update_account`) and `get_user` do no IAM checks;
+    the write helpers are called by the seed script and from inside tools
+    (the banking tools call them only after their own checks), and
+    `get_user` only by the seed script.
     """
     
     def __init__(self, db_path: Optional[str] = None):
