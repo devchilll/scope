@@ -2,8 +2,8 @@
 
 Each test runs against a temporary SQLite database and mocked loggers, so
 the tests write no rows to scope/data/storage/banking.db and nothing to the
-audit log files. (Importing scope.data.tools still runs Database() at import
-time, which creates an empty banking.db schema if the file does not exist.)
+audit log files. (scope.data.tools opens its default database only on first
+use, so importing it does not create banking.db.)
 """
 
 from types import SimpleNamespace

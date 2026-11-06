@@ -185,8 +185,11 @@ class TestEscalationQueue:
 class TestDatabaseLocation:
     """Test database storage location."""
     
-    def test_default_location(self):
+    def test_default_location(self, monkeypatch):
         """Queue shares the main banking database by default."""
+        # Only the resolved path is checked; skip schema creation so the test
+        # never opens or creates the real scope/data/storage/banking.db
+        monkeypatch.setattr(Database, "_init_database", lambda self: None)
         queue = EscalationQueue()
         assert "data/storage" in queue.db.db_path.replace("\\", "/")
         assert queue.db.db_path.endswith("banking.db")

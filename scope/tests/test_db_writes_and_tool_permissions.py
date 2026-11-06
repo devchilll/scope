@@ -1,3 +1,11 @@
+"""Tests for database writes and role checks in the agent tools.
+
+Covers: Database.update_account and get_user_accounts permissions (temp
+SQLite file), view_audit_logs / resolve_escalation_ticket role checks, and
+transfer_money persisting through one Database.transfer_funds call (mocked
+database and loggers).
+"""
+
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime

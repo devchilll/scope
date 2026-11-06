@@ -1,11 +1,15 @@
 """Integration tests for the SCOPE agentic system.
 
-These tests verify the end-to-end functionality of the agent including:
-- Safety checks (Layer 2a ML gate, Layer 2b LLM contextual safety)
-- LLM reasoning (decision step)
-- Compliance enforcement
-- Escalation triggers
+These tests check how the agent is wired together:
+- Agent construction and callback registration
+- Config, compliance rules and prompt contents
+- The decision step's actions and fail-safe, with a mocked Gemini client
+
+No test here calls an LLM.
 """
+
+import json
+from unittest.mock import MagicMock
 
 import pytest
 from scope.agent import root_agent
@@ -33,19 +37,17 @@ class TestAgentInitialization:
 class TestSafetyLayer:
     """Test the safety layers (2a ML gate, 2b LLM contextual safety)."""
     
-    def test_safe_input_passes(self):
-        """Test that safe input passes safety checks."""
-        # This would require running the actual agent
-        # For now, we verify the callback exists
+    def test_safety_callback_importable(self):
+        """The pre-model safety callback can be imported.
+
+        Behavioural tests (block / pass) live in tests/test_callbacks.py with a
+        fake model.
+        """
         from scope.callbacks import fast_guardrail_callback
         assert fast_guardrail_callback is not None
     
-    def test_offensive_input_blocked(self):
-        """Test that the pre-model classifier is wired up.
-
-        Behavioural tests (block / pass) live in tests/test_callbacks.py with a
-        fake model; here we only verify the real tool is reachable.
-        """
+    def test_text_safety_tool_available(self):
+        """The shared text classifier object can be created (model loads lazily)."""
         from scope.safety import get_text_tool
         assert get_text_tool() is not None
 
@@ -54,10 +56,19 @@ class TestComplianceEnforcement:
     """Test compliance rule enforcement."""
     
     def test_compliance_rules_loaded(self):
-        """Test that compliance rules are loaded."""
-        config = Config()
-        policy = config.current_policy
-        assert policy.compliance.enabled is not None
+        """compliance_rules.yaml is loaded: rules COMP-001..COMP-007 and the
+        COMP-004 high-value threshold, and every rule ID appears in the
+        formatted rules text and in the agent instruction."""
+        from scope.prompt import build_instruction
+        from scope.rules import COMPLIANCE_CONFIG, COMPLIANCE_RULES_TEXT
+
+        expected_ids = [f"COMP-00{i}" for i in range(1, 8)]
+        assert [rule["id"] for rule in COMPLIANCE_CONFIG["compliance_rules"]] == expected_ids
+        assert float(COMPLIANCE_CONFIG["thresholds"]["high_value_amount"]) > 0
+        instruction = build_instruction()
+        for rule_id in expected_ids:
+            assert f"**{rule_id}**" in COMPLIANCE_RULES_TEXT
+            assert f"**{rule_id}**" in instruction
     
     def test_rule_transformation(self):
         """Test that rules are transformed correctly."""
@@ -68,65 +79,55 @@ class TestComplianceEnforcement:
         assert "PRINCIPLE:" in transformed[0]
 
 
-class TestAgentActions:
-    """Test agent decision actions."""
-    
-    def test_allow_action(self):
-        """Test ALLOW action for safe input."""
-        # Would test actual agent response
-        # Verifying action types are defined
-        expected_actions = ["approve", "reject", "rewrite", "escalate"]
-        from scope.prompt import ROUTER_INSTRUCTIONS
-        for action in expected_actions:
-            assert action in ROUTER_INSTRUCTIONS
-    
-    def test_refuse_action(self):
-        """Test REFUSE action for policy violations."""
-        # Would test actual agent response with violating input
-        pass
-    
-    def test_rewrite_action(self):
-        """Test REWRITE action for unsafe but valid intent."""
-        # Would test actual agent response with rewritable input
-        pass
-    
-    def test_escalate_action(self):
-        """Test ESCALATE action for uncertain cases."""
-        # Would test actual agent response with ambiguous input
-        pass
+class TestDecisionActions:
+    """The decision step (make_safe_and_compliant_decision) with a mocked Gemini client."""
 
+    @pytest.fixture
+    def decide(self, monkeypatch):
+        """Run the decision tool against a fake client; returns (decision, prompt)."""
+        import scope.observability_tools as obs
+        client = MagicMock()
+        monkeypatch.setattr(obs, "genai_client", client)
+        monkeypatch.setattr(obs, "audit_logger", MagicMock())
 
-class TestEndToEndFlow:
-    """Test complete end-to-end agent flow."""
-    
-    @pytest.mark.skip(reason="Requires actual LLM calls")
-    def test_safe_query_flow(self):
-        """Test complete flow with safe query."""
-        # This would make actual agent calls
-        # Example:
-        # response = root_agent.run("What is the weather today?")
-        # assert response contains expected safe output
-        pass
-    
-    @pytest.mark.skip(reason="Requires actual LLM calls")
-    def test_unsafe_query_flow(self):
-        """Test complete flow with unsafe query."""
-        # This would make actual agent calls with unsafe content
-        # and verify it's blocked or rewritten
-        pass
-    
-    @pytest.mark.skip(reason="Requires actual LLM calls")
-    def test_compliance_violation_flow(self):
-        """Test complete flow with compliance violation."""
-        # This would test agent with input violating compliance rules
-        pass
-    
-    @pytest.mark.skip(reason="Requires actual LLM calls")
-    def test_escalation_flow(self):
-        """Test complete flow triggering escalation."""
-        # This would test agent with ambiguous input
-        # and verify escalation ticket is created
-        pass
+        def _decide(model_reply=None, error=None):
+            if error is not None:
+                client.models.generate_content.side_effect = error
+            else:
+                client.models.generate_content.return_value.text = json.dumps(model_reply)
+            decision = json.loads(obs.make_safe_and_compliant_decision({"safety_score": 0.5}))
+            prompt = client.models.generate_content.call_args.kwargs["contents"]
+            return decision, prompt
+
+        return _decide
+
+    def test_decision_prompt_defines_all_actions(self, decide):
+        """The decision prompt defines approve, reject, rewrite and escalate."""
+        _, prompt = decide({"action": "approve", "params": {}, "reasoning": "ok"})
+        for action in ("approve", "reject", "rewrite", "escalate"):
+            assert f"- **{action}**:" in prompt
+
+    def test_comp001_requires_rewrite(self, decide):
+        """COMP-001 (full account number request) must be rewritten, not rejected."""
+        _, prompt = decide({"action": "approve", "params": {}, "reasoning": "ok"})
+        assert 'If violated_rules contains "COMP-001"' in prompt
+        assert 'you MUST choose "rewrite" action, NOT reject' in prompt
+
+    @pytest.mark.parametrize("reply", [
+        {"action": "reject", "params": {}, "reasoning": "prompt injection"},
+        {"action": "rewrite", "params": {"rewritten_text": "Show the last 4 digits"}, "reasoning": "COMP-001"},
+        {"action": "escalate", "params": {}, "reasoning": "ambiguous"},
+    ])
+    def test_model_decision_returned(self, decide, reply):
+        """The model's verdict is returned to the agent unchanged."""
+        decision, _ = decide(reply)
+        assert decision == reply
+
+    def test_decision_error_escalates(self, decide):
+        """If the decision call fails, the tool fails safe to escalate."""
+        decision, _ = decide(error=RuntimeError("quota exceeded"))
+        assert decision["action"] == "escalate"
+        assert "quota exceeded" in decision["reasoning"]
 
 
 class TestCallbackIntegration:

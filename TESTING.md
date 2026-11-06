@@ -1,31 +1,40 @@
 # SCOPE Test Suite
 
-Comprehensive unit and integration tests for the SCOPE framework's 5 pillars.
+Unit and integration tests for the SCOPE framework's 5 pillars: 275 tests
+collected (`uv run pytest --co -q`). Without Gemini credentials (see Notes) 271
+pass and the 4 Gemini-backed tests skip.
 
 ## Test Structure
 
 ```
 scope/
 ├── safety/tests/
-│   ├── test_safety.py          # Image safety tool
-│   └── test_text_safety.py     # Text safety classifier (fake model)
+│   ├── test_safety.py          # Image safety tool (4 tests)
+│   └── test_text_safety.py     # Text safety classifier, fake model (17 tests)
 ├── compliance/tests/
 │   └── test_compliance.py      # Rule transformation (5 tests)
 ├── iam/tests/
 │   ├── test_iam.py             # Roles, permissions, ACL (14 tests)
-│   └── test_tool_enforcement.py # Banking tools act as current user (24 tests)
-└── escalation/tests/
-    └── test_escalation.py      # Queue, tickets, metadata, SQLite (18 tests)
+│   └── test_tool_enforcement.py # Banking tools act as current user (33 tests)
+├── escalation/tests/
+│   └── test_escalation.py      # Queue, tickets, metadata, SQLite (18 tests)
+└── tests/
+    ├── test_db_writes_and_tool_permissions.py # DB writes, tool role checks, transfer persistence (5 tests)
+    ├── test_prompt.py          # Permission-driven tool list in the prompt (22 tests)
+    └── test_safety_layer1.py   # safety_check_layer1 tool output, fake model (3 tests)
 
 tests/
-├── test_audit_logging.py       # Tool-call audit callback, daily rollover, log viewing
-├── test_callbacks.py           # Pre-model safety gate (before_model_callback)
-├── test_escalation_config.py   # Escalation threshold, COMP-004 transfer guard, custom rules
-├── test_transfer_validation.py # transfer_money validation, atomic transfer, connection cleanup
-└── test_agent_integration.py   # Agentic system integration
+├── test_agent_integration.py   # Agent wiring, prompt, decision actions (16 tests)
+├── test_audit_logging.py       # Tool-call audit callback, daily rollover, log viewing (23 tests)
+├── test_callbacks.py           # Pre-model safety gate (before_model_callback) (54 tests)
+├── test_escalation_config.py   # Escalation threshold, COMP-004 transfer guard, custom rules (17 tests)
+├── test_integration.py         # Escalation queue on a temp DB, Gemini-backed Layer 2b / decision (9 tests, 4 need credentials)
+└── test_transfer_validation.py # transfer_money validation, atomic transfer, connection cleanup (35 tests)
 ```
 
 ## Running Tests
+
+`pytest` is in the `dev` dependency group, which `uv run` installs by default.
 
 ### All Tests
 ```bash
@@ -34,7 +43,7 @@ uv run pytest -v
 
 ### By Pillar
 ```bash
-# Safety
+# Safety (test_safety.py downloads the NSFW image model on first run)
 uv run pytest scope/safety/tests/ -v
 
 # Compliance
@@ -45,6 +54,9 @@ uv run pytest scope/iam/tests/ -v
 
 # Escalation
 uv run pytest scope/escalation/tests/ -v
+
+# Prompt, safety_check_layer1 tool, DB writes
+uv run pytest scope/tests/ -v
 
 # Integration
 uv run pytest tests/ -v
@@ -57,16 +69,21 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 
 ## Test Coverage
 
-### Pillar 1: Safety
-- ✅ ImageSafetyTool initialization
-- ✅ Output format validation
+### Pillar 1: Safety (21 tests)
+- ✅ ImageSafetyTool initialises (processor and model loaded)
+- ✅ ImageSafetyTool `check` returns the softmax NSFW probability and `is_safe` (score ≤ 0.5) (stub processor and model, no download)
 - ✅ A failed image check returns an unknown result (`checked: false`), never "safe"
 - ✅ TextSafetyTool: safe / toxic / severe-toxicity / threshold / empty input / model unavailable /
   long text classified in overlapping windows in one batched call, max score per category /
   length cap (`too_long`, not classified) / `check_many` batches
   (`scope/safety/tests/test_text_safety.py`, fake model - no download)
 
-### Pre-model safety gate (`tests/test_callbacks.py`)
+### `safety_check_layer1` tool (3 tests, `scope/tests/test_safety_layer1.py`)
+- ✅ Safe input → `PASSED` with the toxicity score; toxic input → `FAILED` with the risk category
+- ✅ Model unavailable → `SKIPPED (model not loaded)`, logged with `success: false`, never `PASSED`
+- Fake classifier and mocked audit logger, no download (the config-disabled path is in `tests/test_callbacks.py`)
+
+### Pre-model safety gate (54 tests, `tests/test_callbacks.py`)
 - ✅ The new message is screened, whatever role the client gave it; without text, the latest user turn
 - ✅ Safe input continues to the LLM
 - ✅ Toxic input returns a refusal `LlmResponse` before the model is called
@@ -101,20 +118,30 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 - ✅ ADMIN role permissions
 - ✅ Permission checking function
 - ✅ User creation
-- ✅ User permission checking
-- ✅ User representation
+- ✅ User permission checking (USER, STAFF)
 - ✅ Permission check (allowed)
 - ✅ Permission check (denied)
 - ✅ Permission check (raises exception)
 - ✅ Escalation viewing permissions
 - ✅ Escalation resolution permissions
 
-### IAM tool enforcement (24 tests, `scope/iam/tests/test_tool_enforcement.py`)
+### IAM tool enforcement (33 tests, `scope/iam/tests/test_tool_enforcement.py`)
 - ✅ Case-insensitive role parsing (`parse_role`)
 - ✅ Role descriptions match `ROLE_PERMISSIONS`
 - ✅ USER cannot read another user's transactions or accounts, even by passing their `user_id`
 - ✅ STAFF can read a customer's transactions; audit log records STAFF as the actor
 - ✅ `report_fraud` only files tickets for accounts the caller may access
+
+### Prompt tool list (22 tests, `scope/tests/test_prompt.py`)
+- ✅ Every tool definition has title, call signature, notes and `Permission` values
+- ✅ Each role sees only the tools its permissions allow (USER 12, STAFF 14, ADMIN 14)
+- ✅ Role-specific notes ("your own" for USER, "any customer" for STAFF/ADMIN)
+- ✅ Unknown roles fall back to USER; role names are case-insensitive
+
+### DB writes and tool role checks (5 tests, `scope/tests/test_db_writes_and_tool_permissions.py`)
+- ✅ `update_account` persists balance and status; `get_user_accounts` enforces ownership for USER
+- ✅ `view_audit_logs` and `resolve_escalation_ticket` deny USER and allow STAFF
+- ✅ `transfer_money` persists through one `Database.transfer_funds` call
 
 ### Pillar 5: Escalation (18 tests)
 - ✅ Ticket creation
@@ -131,24 +158,30 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 - ✅ Ticket metadata stored and read back (and NULL → None)
 - ✅ Malformed metadata (invalid JSON or not an object) reads back as None without breaking the queue
 - ✅ Queue statistics
-- ✅ Default database location
+- ✅ Default database location (path only; the real database is not opened)
 - ✅ Custom database location
 
-### Integration Tests (18 tests)
+### Agent integration (16 tests, `tests/test_agent_integration.py`)
 - ✅ Agent initialization
 - ✅ Config loading (safety / compliance / escalation policy)
-- ✅ Safety callback exists
-- ✅ Safety tools functional
-- ✅ Compliance rules loaded
+- ✅ Safety callback importable; shared text classifier object can be created (no behaviour checked here)
+- ✅ Compliance rules COMP-001 to COMP-007 and the COMP-004 `high_value_amount` threshold loaded from `compliance_rules.yaml`; every rule ID appears in the agent instruction
 - ✅ Rule transformation
-- ✅ Agent actions defined (ALLOW, REFUSE, REWRITE, ESCALATE)
+- ✅ Decision prompt defines approve / reject / rewrite / escalate and requires `rewrite` for COMP-001 (mocked Gemini client)
+- ✅ The model's decision is returned unchanged; a failed decision call fails safe to `escalate`
 - ✅ Callback registration
-- ✅ Prompt includes safety policy
-- ✅ Prompt includes all actions
-- ✅ Prompt includes output format
-- ⏭️ End-to-end flows (skipped - requires LLM calls)
+- ✅ Prompt runs the safety tools in order and lists all four actions
+- ✅ Prompt includes escalation handling
 
-### Escalation & config wiring (`tests/test_escalation_config.py`)
+### Integration (9 tests, `tests/test_integration.py`)
+- ✅ Ticket datetime fields; persistence and retrieval on a temporary database
+- ✅ STAFF sees every user's tickets; USER sees exactly their own
+- ✅ The Layer 2b prompt carries the role from the module-level config the tool reads (mocked client)
+- ⏭️ Gemini-backed: STAFF request for all tickets scores as safe; USER request gets a real analysis;
+  high scores → `approve`; low scores → `reject` or `escalate`. These skip without Gemini
+  credentials (see Notes) and fail if the tool returned its error fallback instead of a model answer.
+
+### Escalation & config wiring (17 tests, `tests/test_escalation_config.py`)
 - ✅ Decision prompt uses `GOOGLE_ESCALATION_THRESHOLD` (default 0.6) for both the escalate and approve conditions, and the configured model
 - ✅ `GOOGLE_GENAI_USE_VERTEXAI` selects Vertex AI or the Gemini API client
 - ✅ `create_escalation_ticket` stores the Layer 2b confidence (default 0.0, clamped to 0-1)
@@ -156,7 +189,14 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 - ✅ `report_fraud` ticket metadata is persisted
 - ✅ `GOOGLE_COMPLIANCE_RULES` appended to the agent instruction (unchanged when empty); rules set in the environment, including braces, appear verbatim in the system instruction produced by ADK's instruction processing
 
-### Transfers (`tests/test_transfer_validation.py`)
+### Audit logging (23 tests, `tests/test_audit_logging.py`)
+- ✅ A `tool_call` event per tool run (checked through a scripted ADK run), with role and arguments; errors and denials marked failed; sensitive and long arguments not dumped
+- ✅ `after_model_callback` logs truncated response text and function calls
+- ✅ Audit and compliance logs roll over at midnight; separate logger instances do not cross-write
+- ✅ `view_audit_logs` newest-first, event-type filter, access decision logged as SOC2 CC6.1
+- ✅ `view_logs.py` follow mode applies filters
+
+### Transfers (35 tests, `tests/test_transfer_validation.py`)
 - ✅ Same-account transfers rejected (tool and database), no balance change
 - ✅ NaN / ±inf, an int too large for a float (`10**400`), non-numeric (`"50"`, `None`, `True`), zero / negative and sub-cent (> 2 decimal places) amounts rejected before any database access
 - ✅ `Database.transfer_funds` called directly rejects the same invalid amounts (e.g. `0.005`, `0.025`, NaN) with `ValueError`; nothing is written
@@ -167,15 +207,16 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 ## Test Configuration
 
 **pytest.ini:**
-- Test paths: All pillar test directories + integration tests
+- Test paths: `scope/safety/tests`, `scope/compliance/tests`, `scope/iam/tests`, `scope/escalation/tests`, `scope/tests`, `tests`
 - Verbose output enabled
 - Short traceback format
 
 **Dependencies:**
-- pytest >= 7.0.0
+- `pytest>=7.0.0` in the `dev` dependency group of `pyproject.toml` (installed by `uv run` / `uv sync` by default; not a runtime dependency)
 
 ## Notes
 
-- Integration tests for actual LLM calls are marked as `@pytest.mark.skip` to avoid API costs during development
-- Database tests use temporary files that are cleaned up automatically
-- All tests use pytest fixtures for proper setup/teardown
+- Gemini-backed tests in `tests/test_integration.py` use `pytest.mark.skipif` (`requires_llm`) and run only when the client the tools use has credentials: with `GOOGLE_GENAI_USE_VERTEXAI=true` (the default, Vertex AI), when `GOOGLE_APPLICATION_CREDENTIALS` is set or `gcloud auth application-default login` has been run; with `GOOGLE_GENAI_USE_VERTEXAI=false` (Gemini API), when `GOOGLE_API_KEY` or `GEMINI_API_KEY` is set in the environment
+- Tests that write rows use temporary SQLite files (`tmp_path`); no test writes to `scope/data/storage/banking.db`. The banking tools open that default database only on first use (not at import), so the suite does not create it in a fresh checkout
+- `conftest.py` redirects the audit and compliance loggers to per-test temporary directories, so tests never write to `scope/logging/audit_logs` or `scope/logging/compliance_logs`
+- All tests use pytest fixtures for setup/teardown
