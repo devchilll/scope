@@ -101,14 +101,15 @@ Layer 1:  Decision (approve / reject / rewrite / escalate), role-aware
 Human Review Queue (STAFF/ADMIN resolve via resolve_escalation_ticket)
 ```
 
-### The 6 Core Modules
+### Modules
 
 1. **Safety** (`scope/safety/`, `scope/callbacks.py`) - ML pre-model gate + LLM contextual checks
 2. **Compliance** (`scope/rules/`, `scope/compliance/`) - YAML safety/compliance rules with IDs
-3. **IAM** (`scope/iam/`) - Roles, permissions, access control
-4. **Escalation** (`scope/escalation/`) - Human-in-the-loop ticket queue
-5. **Data** (`scope/data/`) - SQLite banking database + IAM-protected agent tools
-6. **Logging** (`scope/logging/`) - Audit trail, compliance logs, terminal viewer
+3. **Observability** (`scope/logging/`) - Audit trail, compliance logs, terminal viewer
+4. **IAM** (`scope/iam/`) - Roles, permissions, access control
+5. **Escalation** (`scope/escalation/`) - Human-in-the-loop ticket queue
+
+Supporting layer: **Data** (`scope/data/`) - SQLite banking database + IAM-protected agent tools
 
 ---
 

@@ -40,7 +40,7 @@ class User:
 
 
 class AccessControl:
-    """Access control manager for the SCOPE."""
+    """Access control manager for SCOPE."""
     
     @staticmethod
     def check_permission(user: User, permission: Permission, raise_on_deny: bool = True) -> bool:

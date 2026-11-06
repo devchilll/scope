@@ -1,6 +1,6 @@
 # SCOPE Test Suite
 
-Comprehensive unit and integration tests for the SCOPE framework's 4 pillars.
+Comprehensive unit and integration tests for the SCOPE framework's 5 pillars.
 
 ## Test Structure
 
@@ -74,7 +74,7 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 - ✅ Compliance section formatting
 - ✅ Empty section formatting
 
-### Pillar 3: IAM (14 tests)
+### Pillar 4: IAM (14 tests)
 - ✅ UserRole enum values
 - ✅ Permission enum values
 - ✅ USER role permissions
@@ -90,7 +90,7 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 - ✅ Escalation viewing permissions
 - ✅ Escalation resolution permissions
 
-### Pillar 4: Escalation (14 tests)
+### Pillar 5: Escalation (14 tests)
 - ✅ Ticket creation
 - ✅ Auto-generated fields (ID, timestamp)
 - ✅ Optional fields defaults
@@ -108,7 +108,7 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 
 ### Integration Tests (18 tests)
 - ✅ Agent initialization
-- ✅ Config loading (4 pillars)
+- ✅ Config loading (safety, compliance, IAM, escalation policy)
 - ✅ Safety callback exists
 - ✅ Safety tools functional
 - ✅ Compliance rules loaded

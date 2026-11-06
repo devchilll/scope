@@ -184,3 +184,6 @@ temp/
 
 # compressed files
 *.zip
+
+# Claude Code worktrees
+.claude/worktrees/
