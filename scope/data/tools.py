@@ -293,7 +293,6 @@ def report_fraud(account_id: str, description: str, user_id: Optional[str] = Non
         return (
             f"Fraud report submitted successfully. Ticket ID: {ticket.id}\n\n"
             f"Our fraud prevention team will review this report within 24 hours. "
-            f"Your account has been flagged for monitoring. "
             f"If you need immediate assistance, please call our fraud hotline at 1-800-FRAUD-HELP."
         )
         
