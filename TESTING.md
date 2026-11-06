@@ -60,15 +60,19 @@ uv run pytest scope/iam/tests/test_iam.py::TestAccessControl::test_check_permiss
 - ✅ ImageSafetyTool initialization
 - ✅ Output format validation
 - ✅ A failed image check returns an unknown result (`checked: false`), never "safe"
-- ✅ TextSafetyTool: safe / toxic / severe-toxicity / threshold / empty input / model unavailable
+- ✅ TextSafetyTool: safe / toxic / severe-toxicity / threshold / empty input / model unavailable /
+  long text classified in overlapping windows, max score per category
   (`scope/safety/tests/test_text_safety.py`, fake model - no download)
 
 ### Pre-model safety gate (`tests/test_callbacks.py`)
-- ✅ Only the latest user turn is screened (model turns ignored)
+- ✅ The new message is screened, whatever role the client gave it; without text, the latest user turn
 - ✅ Safe input continues to the LLM
 - ✅ Toxic input returns a refusal `LlmResponse` before the model is called
 - ✅ Screened and logged once per turn; the decision applies to every model call of that turn (tool loop)
 - ✅ Blocked text is withheld from later model requests (unit + end-to-end through ADK's runner with a fake LLM)
+- ✅ Blocked hashes come from the refusal events' `custom_metadata`; wiping the state copy (`state_delta`, state-only event) doesn't bring the text back
+- ✅ A client-supplied `temp:scope_safety_gate_decision` can't make a toxic message pass
+- ✅ Screening error → request refused, text withheld from later turns
 - ✅ `scope.pre_model_safety_gate` span with blocked / max-score attributes
 - ✅ Model unavailable → logged, fails open to Layer 2b
 - ✅ `GOOGLE_SAFETY_USE_ML_MODELS=false` → classifier skipped (logged), in the callback and the `safety_check_layer1` tool

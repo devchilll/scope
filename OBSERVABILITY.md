@@ -5,8 +5,8 @@
 ### 1. **Flow Logging** (Daily Files)
 - **Location**: `scope/logging/audit_logs/audit_YYYY-MM-DD.jsonl` (the dated file is resolved on every write, so a long-running `adk web` rolls over to a new file at midnight)
 - **Captures**:
-  - User input: the latest user turn of every LLM request, truncated to 500 chars (`before_model_callback`)
-  - Layer 2a safety-check results (toxic-bert scores) and safety blocks (`before_model_callback`)
+  - User input: the new message of each turn (once per turn), truncated to 500 chars (`before_model_callback`)
+  - Layer 2a safety-check results (toxic-bert scores) and safety blocks (`before_model_callback`), including screening errors (`success: false`; the request is refused and logged as a `safety_block` with risk category `screening_error`)
   - LLM responses: response text truncated to 500 chars plus the names of any tools the model asked to call (`after_model_callback`). The full prompt sent to the LLM is not logged.
   - Every tool call, as a `tool_call` event: tool name, arguments (sensitive-looking keys redacted, long strings truncated), user ID and role, and success / error (`after_tool_callback`; tools that raise are logged by `on_tool_error_callback`). Error and permission-denied responses are recorded as `success: false`.
   - Domain events written by the tools themselves: account access, transaction queries, transfers, fraud reports, escalation tickets, Layer 2b safety analyses and decisions
