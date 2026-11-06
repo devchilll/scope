@@ -117,8 +117,9 @@ class TestFastGuardrailCallback:
 
 
 class TestAfterModelCallback:
-    def test_returns_response_unchanged(self):
+    def test_returns_none_so_response_is_unchanged(self):
         resp = LlmResponse(
             content=genai_types.Content(role="model", parts=[genai_types.Part(text="hi")])
         )
-        assert after_model_callback(None, resp) is resp
+        # ADK treats a non-None return as a replacement response.
+        assert after_model_callback(None, resp) is None

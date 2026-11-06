@@ -1,5 +1,6 @@
-"""Tests for the audit trail: daily rollover, tool-call logging, model-response
-logging, view_audit_logs ordering, and the terminal viewer's filters.
+"""Tests for the audit trail: daily rollover, fail-open writes, tool-call
+logging, model-response logging, view_audit_logs ordering, and the terminal
+viewer's filters.
 
 All writes go to tmp dirs (see the ``isolated_log_dirs`` fixture in conftest.py).
 """
@@ -23,6 +24,57 @@ from scope.callbacks import (
 )
 from scope.logging import AuditLogger, ComplianceLogger, get_audit_logger
 from scope.logging import view_logs
+
+
+def _run_scripted_agent(tool_func, tool_args):
+    """Run a real ADK agent whose scripted model calls ``tool_func`` once.
+
+    Returns the function responses ADK sent back to the model.
+    """
+    from google.adk.agents import LlmAgent
+    from google.adk.models import BaseLlm
+    from google.adk.runners import InMemoryRunner
+
+    class ScriptedLlm(BaseLlm):
+        model: str = "scripted"
+
+        async def generate_content_async(self, llm_request, stream=False):
+            answered = any(
+                p.function_response
+                for c in llm_request.contents for p in (c.parts or [])
+            )
+            part = (
+                genai_types.Part(text="done") if answered
+                else genai_types.Part(function_call=genai_types.FunctionCall(
+                    name=tool_func.__name__, args=tool_args))
+            )
+            yield LlmResponse(content=genai_types.Content(role="model", parts=[part]))
+
+    agent = LlmAgent(
+        name="audit_wiring_test",
+        model=ScriptedLlm(),
+        tools=[tool_func],
+        after_tool_callback=audit_tool_call_callback,
+        on_tool_error_callback=audit_tool_error_callback,
+    )
+
+    async def run():
+        runner = InMemoryRunner(agent=agent, app_name="audit_test")
+        session = await runner.session_service.create_session(
+            app_name="audit_test", user_id="u")
+        message = genai_types.Content(role="user", parts=[genai_types.Part(text="hi")])
+        responses = []
+        async for event in runner.run_async(
+            user_id="u", session_id=session.id, new_message=message
+        ):
+            responses.extend(
+                p.function_response.response
+                for p in (event.content.parts if event.content else None) or []
+                if p.function_response
+            )
+        return responses
+
+    return asyncio.run(run())
 
 
 def _read_jsonl(path):
@@ -90,6 +142,70 @@ class TestDailyRollover:
         assert _audit_events(tmp_path / "b") == []
 
 
+class TestFailOpenWrites:
+    """An audit-log write failure must never change a tool's outcome."""
+
+    def test_missing_log_dir_is_recreated(self, tmp_path):
+        logger = AuditLogger(log_dir=tmp_path / "audit")
+        (tmp_path / "audit").rmdir()  # deleted while the process runs
+
+        logger.log_event(audit_module.AuditEventType.USER_QUERY, "user", "after_delete")
+
+        assert [e["action"] for e in _audit_events(tmp_path / "audit")] == ["after_delete"]
+
+    def test_unwritable_log_dir_does_not_raise(self, tmp_path, caplog):
+        blocker = tmp_path / "not_a_dir"
+        blocker.write_text("")  # a file where the log directory should be
+
+        audit_module.append_daily_jsonl(blocker, "audit", {"action": "x"})
+
+        assert "Failed to write log record" in caplog.text
+
+    def test_non_json_values_are_written_as_strings(self, tmp_path):
+        when = datetime(2026, 1, 1, 12, 0, 0)
+        path = audit_module.append_daily_jsonl(
+            tmp_path, "audit", {"at": when}, when=when)
+
+        assert _read_jsonl(path) == [{"at": "2026-01-01 12:00:00"}]
+
+    def test_log_agent_response_reports_failed_write(self, tmp_path, monkeypatch):
+        from scope.observability_tools import log_agent_response
+
+        blocker = tmp_path / "not_a_dir"
+        blocker.write_text("")
+        monkeypatch.setattr(get_audit_logger(), "log_dir", blocker)
+
+        assert log_agent_response("summary", "text").startswith("⚠️ Failed to log response")
+
+    def test_tool_callbacks_do_not_raise_when_logging_fails(self, monkeypatch, caplog):
+        def broken(*args, **kwargs):
+            raise RuntimeError("disk on fire")
+
+        monkeypatch.setattr(get_audit_logger(), "log_tool_call", broken)
+        tool = SimpleNamespace(name="transfer_money")
+
+        assert audit_tool_call_callback(tool, {}, None, "✅ Transfer complete") is None
+        assert audit_tool_error_callback(tool, {}, None, ValueError("x")) is None
+        assert "Failed to log tool call" in caplog.text
+        assert "Failed to log tool error" in caplog.text
+
+    def test_tool_result_unchanged_when_log_dir_unwritable(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        blocker = tmp_path / "not_a_dir"
+        blocker.write_text("")
+        monkeypatch.setattr(get_audit_logger(), "log_dir", blocker)
+
+        def lookup_account(account_id: str) -> str:
+            """Look up an account."""
+            return f"Account {account_id} found"
+
+        responses = _run_scripted_agent(lookup_account, {"account_id": "acc001"})
+
+        assert responses == [{"result": "Account acc001 found"}]
+        assert "Failed to write log record" in caplog.text
+
+
 class TestToolCallAudit:
     def test_success_is_logged_with_role_and_args(self, isolated_log_dirs, monkeypatch):
         monkeypatch.setenv("GOOGLE_IAM_CURRENT_USER_ROLE", "STAFF")
@@ -111,7 +227,8 @@ class TestToolCallAudit:
         assert event["success"] is True
         assert event["details"]["parameters"] == {"account_id": "acc001"}
         assert event["details"]["role"] == "STAFF"
-        # The response body (a balance) is not copied into the audit trail.
+        # The response body (a balance) is not copied into the tool_call event.
+        # (The llm_response event may still contain it if the model repeats it.)
         assert "1234.56" not in json.dumps(event)
 
     def test_error_and_denial_responses_are_marked_failed(self, isolated_log_dirs):
@@ -132,6 +249,33 @@ class TestToolCallAudit:
         assert "Permission denied" in denied["error"]
         assert errored["success"] is False
         assert errored["action"] == "tool_call_list_escalation_tickets"
+
+    def test_json_response_with_error_key_is_marked_failed(self, isolated_log_dirs):
+        audit_dir, _ = isolated_log_dirs
+        tool = SimpleNamespace(name="make_safe_and_compliant_decision")
+
+        audit_tool_call_callback(tool, {}, None, json.dumps(
+            {"action": "escalate", "params": {}, "reasoning": "...", "error": "boom"},
+            indent=2,
+        ))
+        audit_tool_call_callback(tool, {}, None, json.dumps(
+            {"action": "approve", "params": {}, "reasoning": "ok"}))
+        audit_tool_call_callback(tool, {}, None, "{not json")
+
+        failed, ok, unparsable = _audit_events(audit_dir)
+        assert failed["success"] is False
+        assert failed["error"] == "boom"
+        assert ok["success"] is True
+        assert unparsable["success"] is True
+
+    def test_other_replies_are_recorded_as_success(self, isolated_log_dirs):
+        audit_dir, _ = isolated_log_dirs
+
+        audit_tool_call_callback(
+            SimpleNamespace(name="get_ticket"), {}, None, "Ticket T-1 not found")
+
+        [event] = _audit_events(audit_dir)
+        assert event["success"] is True
 
     def test_sensitive_and_long_args_are_not_dumped(self, isolated_log_dirs):
         audit_dir, _ = isolated_log_dirs
@@ -173,49 +317,13 @@ class TestToolCallAudit:
 
     def test_adk_runner_invokes_callback_for_each_tool_call(self, isolated_log_dirs):
         """Drive a real ADK run with a scripted model to check the wiring."""
-        from google.adk.agents import LlmAgent
-        from google.adk.models import BaseLlm
-        from google.adk.runners import InMemoryRunner
-
-        class ScriptedLlm(BaseLlm):
-            model: str = "scripted"
-
-            async def generate_content_async(self, llm_request, stream=False):
-                answered = any(
-                    p.function_response
-                    for c in llm_request.contents for p in (c.parts or [])
-                )
-                part = (
-                    genai_types.Part(text="done") if answered
-                    else genai_types.Part(function_call=genai_types.FunctionCall(
-                        name="lookup_account", args={"account_id": "acc001"}))
-                )
-                yield LlmResponse(content=genai_types.Content(role="model", parts=[part]))
-
         def lookup_account(account_id: str) -> str:
             """Look up an account."""
             return f"Account {account_id} found"
 
-        agent = LlmAgent(
-            name="audit_wiring_test",
-            model=ScriptedLlm(),
-            tools=[lookup_account],
-            after_tool_callback=audit_tool_call_callback,
-            on_tool_error_callback=audit_tool_error_callback,
-        )
+        responses = _run_scripted_agent(lookup_account, {"account_id": "acc001"})
 
-        async def run():
-            runner = InMemoryRunner(agent=agent, app_name="audit_test")
-            session = await runner.session_service.create_session(
-                app_name="audit_test", user_id="u")
-            message = genai_types.Content(role="user", parts=[genai_types.Part(text="hi")])
-            async for _ in runner.run_async(
-                user_id="u", session_id=session.id, new_message=message
-            ):
-                pass
-
-        asyncio.run(run())
-
+        assert responses == [{"result": "Account acc001 found"}]
         audit_dir, _ = isolated_log_dirs
         tool_events = [e for e in _audit_events(audit_dir) if e["event_type"] == "tool_call"]
         assert len(tool_events) == 1
@@ -241,7 +349,7 @@ class TestAfterModelCallbackLogging:
             )
         )
 
-        assert after_model_callback(None, resp) is resp
+        assert after_model_callback(None, resp) is None  # response not replaced
 
         [event] = _audit_events(audit_dir)
         assert event["action"] == "llm_response"

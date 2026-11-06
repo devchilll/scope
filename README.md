@@ -82,7 +82,7 @@ Response: "Your checking account acc001 has a balance of $..."
 - 📜 **Policy-as-Code**: Safety and compliance rules live in YAML with IDs the agent must cite
 - 🔐 **Role-Based Access**: USER / STAFF / ADMIN / SYSTEM with role and ownership checks in the banking, escalation-queue and audit-log tools
 - 📊 **Database Tools**: IAM-protected queries to user / account / transaction tables
-- 📝 **Audit Logging**: Every input, safety score, model response, decision, and tool call logged, plus selected PCI-DSS / SOC2 events
+- 📝 **Audit Logging**: Every input, safety score, model response, and tool call logged; Layer 2b safety decisions logged when the model calls `make_safe_and_compliant_decision`; plus selected PCI-DSS / SOC2 events
 - 🚨 **Escalation**: Uncertain cases routed to a human review queue with role-gated resolution
 
 ---
@@ -458,7 +458,7 @@ audit.log_event(event_type=AuditEventType.USER_QUERY, user_id="user",
 
 Events written automatically by the agent, by `action` (each event also has an `event_type`: `user_query`, `tool_call`, `account_access`, `transaction_query`, `safety_block`, `escalation_created` or `escalation_resolved`):
 
-- Callbacks on every turn: `user_input`, `safety_check` (with toxic-bert scores), `safety_block`, `llm_response` (response text truncated to 500 chars, plus requested tool names), and `tool_call_<tool name>` for every tool invocation (arguments redacted/truncated, user ID and role, success or error)
+- Callbacks: `user_input` and `safety_check` (with toxic-bert scores when the classifier ran) on every LLM request that has user text, plus `safety_block` only when that request is blocked; `llm_response` for every model response (response text truncated to 500 chars, plus requested tool names); and `tool_call_<tool name>` for every tool invocation (arguments redacted/truncated, user ID and role, success or error)
 - Tools: `safety_layer1_check`, `safety_layer2_analysis`, `safety_decision_made`, `account_view_balance`, `query_transactions`, `list_accounts`, `transfer_completed`, `fraud_report`, `create_escalation_ticket`, `ticket_resolved`
 - Failures and denials are written with `success: false` (e.g. `view_balance_failed`, `transfer_unauthorized_source`, `resolve_ticket_unauthorized`)
 

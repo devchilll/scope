@@ -98,6 +98,7 @@ def safety_check_layer2(user_input: str) -> str:
             "risk_factors": [...],
             "analysis": "..."
         }
+        If the analysis fails, the scores are 0.0 and an "error" key is added.
     """
     # Create the Layer 2 safety analysis prompt
     layer2_prompt = f"""You are a safety and compliance analyzer for a banking customer service agent.
@@ -185,7 +186,8 @@ Return ONLY the JSON object, no other text.
             "confidence": 0.0,
             "violated_rules": [],
             "risk_factors": ["analysis_error"],
-            "analysis": f"Error during safety analysis: {str(e)}. Unable to complete analysis."
+            "analysis": f"Error during safety analysis: {str(e)}. Unable to complete analysis.",
+            "error": str(e),
         }
         return json.dumps(error_response, indent=2)
 
@@ -212,6 +214,8 @@ def make_safe_and_compliant_decision(safety_analysis: dict) -> str:
             "params": {...},
             "reasoning": "..."
         }
+        If decision making fails, the action is "escalate" and an "error" key
+        is added.
     """
     decision_prompt = f"""You are a decision maker for a banking customer service agent.
 
@@ -295,7 +299,8 @@ Return ONLY the JSON object, no other text.
         error_response = {
             "action": "escalate",
             "params": {},
-            "reasoning": f"Error during decision making: {str(e)}. Escalating for human review."
+            "reasoning": f"Error during decision making: {str(e)}. Escalating for human review.",
+            "error": str(e),
         }
         return json.dumps(error_response, indent=2)
 
@@ -455,7 +460,7 @@ def log_agent_response(response_summary: str, full_response: str = "", model_use
     """
     try:
         # Log the LLM response
-        audit_logger.log_event(
+        written = audit_logger.log_event(
             event_type=AuditEventType.USER_QUERY,
             user_id=config.IAM_CURRENT_USER_ID,
             action="llm_response",
@@ -466,7 +471,9 @@ def log_agent_response(response_summary: str, full_response: str = "", model_use
                 "full_response": full_response[:2000] if full_response else None  # Limit to 2000 chars for log size
             }
         )
-        
+        if not written:
+            return "⚠️ Failed to log response: the audit log could not be written"
+
         return f"✅ Response logged successfully for audit trail (model: {model_used})"
     except Exception as e:
         # Return error but don't crash
